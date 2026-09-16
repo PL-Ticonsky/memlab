@@ -1,0 +1,224 @@
+<!--
+  ============================================================
+  MemLab 16 MiB — simulador de gestión de memoria
+  ============================================================
+  Herramienta interactiva para visualizar tres estrategias
+  clásicas de gestión de memoria (particiones fijas, variables
+  y dinámicas) sobre un espacio direccionable de 16 MiB.
+
+  Estructura del proyecto:
+    index.html   — este archivo: solo markup y metadatos.
+    css/style.css — toda la hoja de estilos, comentada por sección.
+    js/script.js  — toda la lógica del simulador, comentada por sección.
+    README.md     — explicación de cómo funciona y cómo usarlo.
+
+  No requiere build ni dependencias de servidor: basta con
+  abrir index.html en un navegador (o servirlo estáticamente,
+  p. ej. con GitHub Pages).
+  ============================================================
+-->
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>MemLab 16 MiB</title>
+  <style>
+    :root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+    html{scroll-padding-top:env(safe-area-inset-top,0px)}
+    body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}
+    img{max-width:100%}
+    [hidden]:not([hidden=until-found i]){display:none!important}
+  </style>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600&display=swap">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<div class="wrap">
+  <header class="top">
+    <div class="top-in">
+      <h1>MemLab <span class="u">16 MiB</span></h1>
+      <div class="spec mono">2<sup>24</sup> B direccionables · <b>0x000000 – 0xFFFFFF</b> · multiprogramación con particiones</div>
+      <div class="top-actions">
+        <button class="btn sm" id="btn-escenario">Escenario de fragmentación</button>
+        <button class="btn sm ghost" id="btn-reset">Reiniciar</button>
+      </div>
+    </div>
+  </header>
+
+  <section class="lead">
+    <div class="tabs" role="group" aria-label="Método de gestión de memoria">
+      <button class="tab" data-metodo="fija" aria-pressed="true">
+        <span class="tt">1 · Estáticas de tamaño fijo</span>
+        <span class="ts">Particiones iguales definidas al arrancar</span>
+      </button>
+      <button class="tab" data-metodo="variable" aria-pressed="false">
+        <span class="tt">2 · Estáticas de tamaño variable</span>
+        <span class="ts">Tabla de particiones de distinto tamaño</span>
+      </button>
+      <button class="tab" data-metodo="dinamica" aria-pressed="false">
+        <span class="tt">3 · Particiones dinámicas</span>
+        <span class="ts">Huecos a medida, con y sin compactación</span>
+      </button>
+    </div>
+
+    <div class="kpis" id="kpis"></div>
+
+    <div class="panelrow">
+      <div class="card">
+        <div class="hd"><h2>Configuración</h2><span class="note" id="cfg-note"></span></div>
+        <div class="bd">
+          <div class="field">
+            <span class="lbl">Memoria del sistema operativo</span>
+            <select id="so-size" aria-label="Tamaño reservado para el sistema operativo">
+              <option value="1">1 MiB · 0x000000 – 0x0FFFFF</option>
+              <option value="2" selected>2 MiB · 0x000000 – 0x1FFFFF</option>
+              <option value="4">4 MiB · 0x000000 – 0x3FFFFF</option>
+            </select>
+          </div>
+
+          <div class="field" id="f-fijas">
+            <span class="lbl">Número de particiones iguales</span>
+            <select id="n-fijas" aria-label="Número de particiones iguales">
+              <option value="2">2 particiones</option>
+              <option value="4">4 particiones</option>
+              <option value="7" selected>7 particiones</option>
+              <option value="8">8 particiones</option>
+              <option value="14">14 particiones</option>
+              <option value="16">16 particiones</option>
+            </select>
+            <p class="hint" id="fijas-hint"></p>
+          </div>
+
+          <div class="field" id="f-variables" hidden>
+            <span class="lbl">Tabla de particiones (KiB)</span>
+            <div class="chips" id="var-chips"></div>
+            <div class="addrow">
+              <input type="number" id="var-new" min="64" max="14336" step="64" placeholder="tamaño en KiB" aria-label="Tamaño de la nueva partición en KiB">
+              <button class="btn sm" id="var-add">Añadir</button>
+            </div>
+            <p class="hint" id="var-hint"></p>
+          </div>
+
+          <div class="field" id="f-dinamica" hidden>
+            <span class="lbl">Compactación</span>
+            <button class="btn" id="btn-compactar" style="justify-content:center">Compactar ahora</button>
+            <label class="chk"><input type="checkbox" id="auto-compact"> Compactar automáticamente al fallar una asignación</label>
+            <p class="hint">Sin compactación los huecos quedan dispersos: la memoria libre existe pero no es contigua.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="hd"><h2>Algoritmo de asignación</h2></div>
+        <div class="bd">
+          <div class="field">
+            <div class="seg" id="algo" role="group" aria-label="Algoritmo de asignación">
+              <button data-algo="primero" aria-pressed="true">Primer ajuste</button>
+              <button data-algo="mejor" aria-pressed="false">Mejor ajuste</button>
+              <button data-algo="peor" aria-pressed="false">Peor ajuste</button>
+            </div>
+            <p class="hint" id="algo-hint"></p>
+          </div>
+          <div class="field">
+            <span class="lbl">Cola de trabajos</span>
+            <div style="display:flex;gap:6px;flex-wrap:wrap">
+              <button class="btn primary sm" id="btn-cargar-todos">Cargar la cola completa</button>
+              <button class="btn sm" id="btn-liberar-todos">Liberar todo</button>
+            </div>
+            <p class="hint">Los programas se intentan cargar en el orden de la tabla, como haría el planificador de trabajos.</p>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <div class="main">
+    <div class="mapwrap">
+      <div class="card">
+        <div class="hd"><h2>Mapa de memoria</h2><span class="note mono" id="map-note"></span></div>
+        <div class="legend">
+          <span><i class="i-so"></i>S.O.</span>
+          <span><i class="i-libre"></i>Libre</span>
+          <span><i class="i-frag"></i>Frag. interna</span>
+          <span><i class="i-res"></i>No particionado</span>
+        </div>
+        <div class="bd" style="padding:10px">
+          <div class="mapa" id="mapa" aria-label="Bloques de memoria de 0x000000 a 0xFFFFFF"></div>
+        </div>
+      </div>
+    </div>
+
+    <div style="display:grid;gap:16px;min-width:0">
+      <div class="card" style="order:2">
+        <div class="hd"><h2>Bloque seleccionado</h2><span class="note">distribución interna de segmentos</span></div>
+        <div class="bd" id="detalle"></div>
+      </div>
+
+      <div class="card" style="order:1">
+        <div class="hd">
+          <h2>Programas simulados</h2>
+          <span class="note" id="prog-note"></span>
+        </div>
+        <div class="bd">
+          <div class="seglegend" style="margin-bottom:10px">
+            <span><i class="s-cod"></i>Código</span>
+            <span><i class="s-dat"></i>Datos</span>
+            <span><i class="s-pil"></i>Pila</span>
+            <span><i class="s-hea"></i>Montículo (heap)</span>
+          </div>
+          <div class="tblscroll">
+            <table class="tbl" id="tabla-progs">
+              <thead>
+                <tr>
+                  <th>Programa</th>
+                  <th>Segmentos</th>
+                  <th style="text-align:right">Tamaño</th>
+                  <th style="text-align:right">Base</th>
+                  <th>Estado</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+
+          <details class="addprog">
+            <summary>Añadir un programa a la cola</summary>
+            <div class="form4 wide">
+              <div class="f"><span>Nombre</span><input type="text" id="np-nombre" maxlength="28" placeholder="Servidor de correo"></div>
+            </div>
+            <div class="form4">
+              <div class="f"><span>Código KiB</span><input type="number" id="np-cod" min="8" step="8" value="512"></div>
+              <div class="f"><span>Datos KiB</span><input type="number" id="np-dat" min="8" step="8" value="256"></div>
+              <div class="f"><span>Pila KiB</span><input type="number" id="np-pil" min="8" step="8" value="64"></div>
+              <div class="f"><span>Heap KiB</span><input type="number" id="np-hea" min="8" step="8" value="128"></div>
+            </div>
+            <div style="margin-top:10px;display:flex;gap:8px;align-items:center">
+              <button class="btn sm primary" id="np-add">Añadir a la cola</button>
+              <span class="hint" id="np-hint"></span>
+            </div>
+          </details>
+        </div>
+      </div>
+
+      <div class="card" style="order:3">
+        <div class="hd"><h2>Bitácora del gestor</h2><span class="note">lo más reciente primero</span></div>
+        <div class="log" id="log" role="log" aria-live="polite"></div>
+      </div>
+    </div>
+  </div>
+
+  <footer class="foot">
+    <span>Frag. interna = espacio perdido <em>dentro</em> de una partición asignada.</span>
+    <span>Frag. externa = memoria libre que no puede usarse por no ser contigua.</span>
+    <span class="mono">1 MiB = 1 024 KiB = 1 048 576 B</span>
+  </footer>
+</div>
+
+<script src="js/script.js"></script>
+</body>
+</html>
