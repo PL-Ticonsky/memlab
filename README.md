@@ -94,8 +94,3 @@ de espacio contiguo, pero sí hay espacio total suficiente).
   visible de inmediato (útil para ver el efecto de la compactación en
   particiones dinámicas).
 
-## Licencia
-
-Sin licencia definida todavía — añade la que prefieras (MIT es una
-opción común para este tipo de material educativo) antes de hacerlo
-público si te importa dejarlo explícito.
