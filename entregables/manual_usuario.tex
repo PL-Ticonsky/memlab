@@ -1,0 +1,447 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=2.2cm,headheight=16pt]{geometry}
+\usepackage[spanish,es-nodecimaldot]{babel}
+\usepackage{microtype}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage{enumitem}
+\usepackage{fancyhdr}
+\usepackage{lastpage}
+\usepackage{titlesec}
+\usepackage{listings}
+\usepackage{amsmath}
+\usepackage[most]{tcolorbox}
+\usepackage{hyperref}
+
+\definecolor{MemBlue}{HTML}{1F49C4}
+\definecolor{MemDark}{HTML}{161A21}
+\definecolor{MemGray}{HTML}{4B5563}
+\definecolor{MemLight}{HTML}{E7ECFA}
+\definecolor{MemGreen}{HTML}{0D7355}
+\definecolor{MemOrange}{HTML}{A06B06}
+\definecolor{MemRed}{HTML}{AE382C}
+
+\hypersetup{colorlinks=true,linkcolor=MemBlue,urlcolor=MemBlue,
+  pdftitle={Manual de usuario de MemLab 16 MiB},pdfauthor={Documentación del proyecto MemLab}}
+\pagestyle{fancy}
+\fancyhf{}
+\lhead{\sffamily\small MemLab 16 MiB}
+\rhead{\sffamily\small Manual de usuario}
+\cfoot{\sffamily\small Página \thepage\ de \pageref{LastPage}}
+\titleformat{\section}{\Large\bfseries\sffamily\color{MemBlue}}{\thesection}{0.7em}{}
+\titleformat{\subsection}{\large\bfseries\sffamily\color{MemDark}}{\thesubsection}{0.7em}{}
+\setlist{nosep,leftmargin=*}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{5pt}
+\renewcommand{\arraystretch}{1.18}
+
+\lstdefinestyle{memlab}{basicstyle=\ttfamily\footnotesize,
+  backgroundcolor=\color{MemLight!45},frame=single,rulecolor=\color{MemBlue!25},
+  breaklines=true,showstringspaces=false,columns=fullflexible}
+\lstset{style=memlab}
+\newtcolorbox{paso}[1]{colback=MemLight!50,colframe=MemBlue!70!black,
+  boxrule=0.7pt,arc=2mm,title={#1},fonttitle=\bfseries\sffamily}
+\newtcolorbox{aviso}[1][Importante]{colback=MemOrange!7,colframe=MemOrange!75!black,
+  boxrule=0.6pt,arc=2mm,title={#1},fonttitle=\bfseries\sffamily}
+\newtcolorbox{resultado}[1][Qué observar]{colback=MemGreen!6,colframe=MemGreen!70!black,
+  boxrule=0.6pt,arc=2mm,title={#1},fonttitle=\bfseries\sffamily}
+\newcommand{\control}[1]{\textsf{\textbf{#1}}}
+\newcommand{\archivo}[1]{\texttt{#1}}
+
+\begin{document}
+
+\begin{titlepage}
+  \centering
+  \vspace*{2.2cm}
+  {\sffamily\bfseries\fontsize{34}{39}\selectfont\color{MemBlue} MemLab 16 MiB\par}
+  \vspace{0.5cm}
+  {\sffamily\fontsize{23}{28}\selectfont Manual de usuario\par}
+  \vspace{0.8cm}
+  {\Large Aprende a asignar, liberar y compactar memoria\par}
+  \vfill
+  \begin{tabular}{rl}
+    \textbf{Aplicación:} & simulador web educativo\\
+    \textbf{Versión documentada:} & 21 de septiembre de 2026\\
+    \textbf{Memoria simulada:} & 16 MiB\\
+    \textbf{Instalación:} & no requerida\\
+  \end{tabular}
+  \vfill
+  {\small Este documento describe el comportamiento observado en la versión actual de MemLab.\par}
+\end{titlepage}
+
+\tableofcontents
+\newpage
+
+\section{¿Qué es MemLab?}
+
+MemLab es un simulador visual para estudiar cómo un sistema operativo reparte la
+memoria principal entre varios programas. Trabaja con 16 MiB, desde la dirección
+\texttt{0x000000} hasta \texttt{0xFFFFFF}, y permite experimentar sin afectar la
+memoria real del equipo.
+
+Con MemLab puedes:
+
+\begin{itemize}
+  \item reservar 1, 2 o 4 MiB para el sistema operativo;
+  \item comparar particiones fijas, variables y dinámicas;
+  \item aplicar primer, mejor y peor ajuste;
+  \item cargar o liberar programas y ver dónde quedan ubicados;
+  \item estudiar fragmentación interna y externa;
+  \item compactar la memoria dinámica;
+  \item revisar en la bitácora la explicación de cada decisión.
+\end{itemize}
+
+\begin{aviso}
+La simulación es educativa. No administra la RAM real, no ejecuta los programas
+listados y no guarda cambios al cerrar o recargar la página.
+\end{aviso}
+
+\section{Requisitos y apertura}
+
+\subsection{Requisitos}
+
+Solo se necesita un navegador moderno con JavaScript habilitado. No hacen falta
+cuenta, conexión a una base de datos, Node.js ni instalación de paquetes. La
+conexión a Internet se usa únicamente para descargar tipografías; si no está
+disponible, la aplicación sigue funcionando con fuentes locales.
+
+\subsection{Opción rápida: abrir el archivo}
+
+\begin{paso}{Apertura directa}
+\begin{enumerate}
+  \item Localiza la carpeta del proyecto.
+  \item Abre \archivo{index.html} con doble clic.
+  \item Espera a que aparezca el mapa de memoria y la tabla de programas.
+\end{enumerate}
+\end{paso}
+
+\subsection{Opción recomendada: servidor local}
+
+Abre una terminal en la carpeta del proyecto y ejecuta:
+
+\begin{lstlisting}[language=bash]
+python3 -m http.server 8000
+\end{lstlisting}
+
+Después visita \url{http://localhost:8000/}. Para detener el servidor vuelve a la
+terminal y presiona \texttt{Ctrl+C}.
+
+\section{Recorrido por la pantalla}
+
+\subsection{Barra superior}
+
+Muestra el nombre, el rango de direcciones y dos acciones:
+
+\begin{description}
+  \item[Escenario de fragmentación.] Prepara automáticamente una distribución con
+  procesos y espacios intercalados para estudiar fragmentación.
+  \item[Reiniciar.] Recrea los programas y la memoria usando la configuración
+  actualmente seleccionada. No necesariamente vuelve al método fijo original.
+\end{description}
+
+\subsection{Pestañas de método}
+
+Las tres pestañas superiores cambian el modo de administración. Al cambiar de
+método, la memoria se reconstruye y todos los procesos vuelven a la cola.
+
+\begin{longtable}{p{0.25\textwidth}p{0.60\textwidth}}
+\toprule
+\textbf{Método} & \textbf{Idea principal}\\
+\midrule
+\endhead
+Estáticas de tamaño fijo & Divide la memoria de usuario en partes iguales. Es fácil de entender, pero desperdicia espacio dentro de cada partición ocupada.\\
+Estáticas de tamaño variable & Usa una tabla de tamaños diferentes. Permite comparar algoritmos de ajuste, pero las particiones siguen sin poder combinarse.\\
+Particiones dinámicas & Crea un bloque del tamaño exacto del programa. Evita fragmentación interna, pero puede dejar huecos externos dispersos.\\
+\bottomrule
+\end{longtable}
+
+\subsection{Indicadores KPI}
+
+\begin{description}
+  \item[Utilización.] Porcentaje de la memoria de usuario ocupado por datos útiles
+  de procesos; no incluye el S.O. ni la fragmentación interna.
+  \item[Fragmentación interna.] Espacio sobrante dentro de particiones asignadas.
+  En modo dinámico siempre es cero.
+  \item[Fragmentación externa.] En dinámica, memoria libre fuera del hueco más
+  grande; en estáticas, suma de particiones libres que no pueden unirse.
+  \item[Mayor bloque libre.] Tamaño máximo de un programa que podría entrar de
+  forma inmediata, suponiendo que exista un bloque de ese tamaño.
+  \item[Procesos.] Cantidad cargada frente al total; el subtítulo agrupa trabajos
+  en cola y rechazados.
+\end{description}
+
+\subsection{Mapa de memoria}
+
+La columna representa los 16 MiB completos. La altura de cada bloque es
+proporcional a su tamaño. Los patrones distinguen:
+
+\begin{itemize}
+  \item sistema operativo;
+  \item bloques ocupados, con un color por proceso;
+  \item particiones o huecos libres;
+  \item fragmentación interna rayada;
+  \item zona no particionada, que no puede utilizarse.
+\end{itemize}
+
+Haz clic en cualquier bloque para seleccionarlo. El panel \control{Bloque
+seleccionado} mostrará su rango, tamaño y, si contiene un proceso, el reparto de
+código, datos, pila y montículo.
+
+\subsection{Tabla de programas}
+
+Cada fila contiene nombre, PID, barra de segmentos, tamaño total, dirección base,
+estado y acción disponible. Los estados significan:
+
+\begin{description}
+  \item[cola:] el trabajo espera una asignación;
+  \item[cargado:] tiene memoria y puede liberarse;
+  \item[rechazado:] el último intento no encontró un bloque adecuado.
+\end{description}
+
+\subsection{Bitácora}
+
+La bitácora coloca el evento más reciente arriba. Explica cambios de configuración,
+asignaciones, liberaciones, rechazos, compactaciones e inspecciones. Las marcas
+\texttt{t001}, \texttt{t002}, etc. indican el orden lógico, no segundos reales.
+
+\section{Primer uso guiado}
+
+Al abrir la aplicación se seleccionan 2 MiB para el S.O. y siete particiones fijas
+de 2 MiB. Se cargan Editor de texto, Compilador C, Terminal y Hoja de cálculo.
+
+\begin{paso}{1. Examinar el estado inicial}
+\begin{enumerate}
+  \item Observa los cinco KPI.
+  \item Haz clic en el bloque del Editor de texto.
+  \item Comprueba el rango, el registro base y sus cuatro segmentos.
+  \item Identifica la franja de fragmentación interna dentro de su partición.
+\end{enumerate}
+\end{paso}
+
+\begin{resultado}
+El Editor ocupa 1 MiB dentro de una partición de 2 MiB; queda 1 MiB de
+fragmentación interna que ningún otro proceso puede aprovechar.
+\end{resultado}
+
+\begin{paso}{2. Cargar y liberar}
+\begin{enumerate}
+  \item Busca un programa en estado \control{cola}.
+  \item Presiona \control{Cargar}.
+  \item Revisa su base y la nueva línea de bitácora.
+  \item Presiona \control{Liberar} y observa cómo vuelve a cola.
+\end{enumerate}
+\end{paso}
+
+\begin{paso}{3. Reiniciar el ejercicio}
+Presiona \control{Reiniciar}. El catálogo y las asignaciones iniciales se recrean
+con el método, el S.O. y las opciones que estén activos en ese momento.
+\end{paso}
+
+\section{Uso de cada método}
+
+\subsection{Particiones fijas iguales}
+
+\begin{enumerate}
+  \item Selecciona \control{Estáticas de tamaño fijo}.
+  \item Elige 1, 2 o 4 MiB para el S.O.
+  \item Elige entre 2 y 16 particiones según las opciones disponibles.
+  \item Lee el tamaño calculado debajo del selector.
+  \item Carga programas uno por uno o usa \control{Cargar la cola completa}.
+\end{enumerate}
+
+El algoritmo de ajuste no se puede elegir en este modo: como todas las particiones
+miden lo mismo, se toma la primera libre capaz de contener el proceso. Si un
+programa supera el tamaño de una partición, no podrá cargarse aunque la suma de
+varias particiones libres sea suficiente.
+
+\subsection{Particiones fijas variables}
+
+\begin{enumerate}
+  \item Selecciona \control{Estáticas de tamaño variable}.
+  \item Revisa los chips que indican tamaños en KiB.
+  \item Para eliminar una partición, presiona la \(\times\) de su chip.
+  \item Para añadir una, escribe al menos 64 KiB y presiona \control{Añadir}.
+  \item Escoge primer, mejor o peor ajuste.
+  \item Carga trabajos y compara las decisiones en la bitácora.
+\end{enumerate}
+
+Los tamaños añadidos se ordenan automáticamente de menor a mayor. La interfaz no
+permite añadir una partición si la suma excede la memoria de usuario disponible.
+Sin embargo, si primero defines una tabla grande y después aumentas el S.O., algunas
+entradas finales pueden no construirse; revisa siempre el mapa y el texto de suma.
+
+\subsection{Particiones dinámicas}
+
+\begin{enumerate}
+  \item Selecciona \control{Particiones dinámicas}.
+  \item Escoge un algoritmo de ajuste.
+  \item Carga varios programas.
+  \item Libera procesos intermedios para producir huecos separados.
+  \item Observa \control{Frag. externa} y \control{Mayor bloque libre}.
+  \item Presiona \control{Compactar ahora} y compara el mapa antes/después.
+\end{enumerate}
+
+Activa \control{Compactar automáticamente al fallar una asignación} si quieres que
+el simulador compacte cuando el total libre alcanza, pero ningún hueco individual
+es suficientemente grande. No compacta si falta memoria total.
+
+\section{Algoritmos de ajuste en palabras simples}
+
+\begin{longtable}{p{0.19\textwidth}p{0.43\textwidth}p{0.27\textwidth}}
+\toprule
+\textbf{Algoritmo} & \textbf{Cómo decide} & \textbf{Qué conviene observar}\\
+\midrule
+\endhead
+Primer ajuste & Recorre los bloques en orden de dirección y elige el primero que alcance. & Rapidez conceptual y dependencia del orden.\\
+Mejor ajuste & Compara todos los candidatos y usa el más pequeño posible. & Resto inmediato pequeño y aparición de huecos diminutos.\\
+Peor ajuste & Compara todos y usa el bloque más grande. & Resto grande potencialmente reutilizable.\\
+\bottomrule
+\end{longtable}
+
+No existe un algoritmo universalmente mejor: el resultado depende del orden y
+tamaño de los trabajos. MemLab permite repetir el mismo escenario con distintas
+políticas para comparar.
+
+\section{Crear programas personalizados}
+
+Abre el desplegable \control{Añadir un programa a la cola}. Completa:
+
+\begin{itemize}
+  \item nombre, con máximo visual de 28 caracteres en el formulario;
+  \item código, datos, pila y heap en KiB;
+  \item como mínimo 8 KiB de código; los otros segmentos pueden quedar en cero si
+  el navegador acepta el valor introducido.
+\end{itemize}
+
+Presiona \control{Añadir a la cola}. El tamaño final es la suma de los cuatro
+segmentos. No se acepta un proceso mayor que la memoria de usuario actual.
+
+\begin{aviso}[Datos de práctica]
+Usa nombres de texto normal. Esta versión representa parte de la bitácora como HTML;
+no introduzcas etiquetas ni código en el nombre del programa.
+\end{aviso}
+
+\section{Escenario de fragmentación}
+
+El botón \control{Escenario de fragmentación} realiza automáticamente lo siguiente:
+
+\begin{enumerate}
+  \item restaura los ocho programas de ejemplo;
+  \item reconstruye la memoria con la configuración activa;
+  \item intenta cargarlos en orden;
+  \item libera los procesos cargados en posiciones alternas;
+  \item muestra cuánto queda libre, cuántos bloques hay y cuál es el mayor;
+  \item sugiere intentar el trabajo pendiente más grande.
+\end{enumerate}
+
+En modo dinámico, este escenario es la forma más rápida de estudiar el contraste
+entre memoria libre total y memoria contigua. Prueba a cargar el proceso sugerido,
+compacta y vuelve a intentarlo.
+
+\section{Ejercicios recomendados}
+
+\subsection{Ejercicio A: fragmentación interna}
+
+\begin{enumerate}
+  \item Usa 2 MiB de S.O. y siete particiones fijas.
+  \item Reinicia.
+  \item Inspecciona Editor, Terminal y Hoja de cálculo.
+  \item Suma las franjas de fragmentación interna.
+\end{enumerate}
+
+Resultado esperado inicial: 3\,136 KiB de fragmentación interna entre los cuatro
+procesos precargados.
+
+\subsection{Ejercicio B: comparar ajustes}
+
+\begin{enumerate}
+  \item Selecciona particiones variables y reinicia.
+  \item Anota dónde se ubica cada trabajo con primer ajuste.
+  \item Repite desde el mismo estado con mejor ajuste y luego con peor ajuste.
+  \item Compara mayor bloque libre, rechazos y fragmentación interna.
+\end{enumerate}
+
+\subsection{Ejercicio C: compactación}
+
+\begin{enumerate}
+  \item Selecciona dinámica y desactiva compactación automática.
+  \item Ejecuta el escenario de fragmentación.
+  \item Anota libre total, mayor hueco y fragmentación externa.
+  \item Compacta manualmente.
+  \item Comprueba que los procesos quedan juntos al inicio y un solo hueco al final.
+\end{enumerate}
+
+\section{Programas incluidos}
+
+\begin{longtable}{p{0.40\textwidth}r p{0.39\textwidth}}
+\toprule
+\textbf{Programa} & \textbf{Tamaño} & \textbf{Comentario práctico}\\
+\midrule
+\endhead
+Editor de texto & 1\,024 KiB & Encaja exactamente en 1 MiB y deja 1 MiB en una partición de 2 MiB.\\
+Compilador C & 2\,048 KiB & Encaja exactamente en la partición fija predeterminada.\\
+Navegador web & 3\,840 KiB & No cabe en una partición fija predeterminada.\\
+Motor de base de datos & 3\,072 KiB & Útil para tablas variables y huecos medianos.\\
+Terminal & 448 KiB & Produce fragmentación interna alta en bloques grandes.\\
+Render 3D & 6\,144 KiB & Trabajo más grande; exige una partición o hueco de 6 MiB.\\
+Servicio de red & 768 KiB & Permite rellenar espacios pequeños.\\
+Hoja de cálculo & 1\,536 KiB & Deja 512 KiB en una partición de 2 MiB.\\
+\bottomrule
+\end{longtable}
+
+\section{Solución de problemas}
+
+\begin{longtable}{p{0.32\textwidth}p{0.55\textwidth}}
+\toprule
+\textbf{Situación} & \textbf{Qué hacer}\\
+\midrule
+\endhead
+La página aparece sin datos & Confirma que JavaScript esté habilitado y que \archivo{js/script.js} conserve su ruta relativa. Abre la consola del navegador para buscar errores.\\
+No se ven los estilos & Verifica que exista \archivo{css/style.css}. Si usas servidor, confirma que responda con estado 200.\\
+Un programa es rechazado & Lee la bitácora. Puede ser mayor que cada partición, faltar memoria total o existir fragmentación externa.\\
+Hay memoria libre pero no carga & Revisa \control{Mayor bloque libre}. En dinámica, compacta; en estáticas, los bloques no se pueden unir.\\
+Compactar no cambia nada & Solo aplica a dinámica. También puede no haber procesos o ya estar contiguos.\\
+Cambiar método borró asignaciones & Es el comportamiento esperado: cada disposición tiene límites diferentes y los procesos vuelven a cola.\\
+Reiniciar no volvió a siete particiones & Reiniciar conserva la configuración activa; selecciona primero el método y valores deseados.\\
+Las letras se ven diferentes & Las fuentes web no cargaron; la aplicación usa una fuente alternativa y sigue funcionando.\\
+\bottomrule
+\end{longtable}
+
+\section{Accesibilidad y uso con teclado}
+
+Los botones y campos se pueden recorrer con \texttt{Tab}; usa \texttt{Enter} o
+barra espaciadora para activarlos. El foco visible indica el control actual. Las
+pestañas y algoritmos anuncian su estado mediante \texttt{aria-pressed}, y la
+bitácora informa cambios con una región activa cortés. El diseño sigue el tema
+claro u oscuro del sistema y evita transiciones si está habilitada la reducción de
+movimiento.
+
+En pantallas estrechas, el mapa pasa encima de los paneles laterales. Las tablas
+pueden desplazarse horizontalmente.
+
+\section{Glosario}
+
+\begin{description}
+  \item[Base.] Primera dirección física asignada a un proceso o bloque.
+  \item[Compactación.] Reubicación de procesos para reunir el espacio libre.
+  \item[Fragmentación externa.] Espacio libre dividido en regiones separadas.
+  \item[Fragmentación interna.] Espacio desperdiciado dentro de una partición ocupada.
+  \item[Heap o montículo.] Segmento usado para memoria dinámica del programa.
+  \item[Hueco.] Región libre en el método dinámico.
+  \item[KiB.] 1\,024 bytes.
+  \item[MiB.] 1\,024 KiB o 1\,048\,576 bytes.
+  \item[PID.] Identificador numérico interno del proceso simulado.
+  \item[Pila.] Segmento asociado a llamadas, variables locales y control de ejecución.
+  \item[Registro límite.] Tamaño máximo válido relativo a la base del proceso.
+\end{description}
+
+\section{Cierre de la sesión}
+
+No existe una operación de guardado. Si necesitas conservar resultados, toma una
+captura o registra manualmente KPI y bitácora antes de cerrar. Detén el servidor
+local con \texttt{Ctrl+C} si lo iniciaste desde la terminal.
+
+\end{document}

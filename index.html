@@ -2,9 +2,9 @@
   ============================================================
   MemLab 16 MiB — simulador de gestión de memoria
   ============================================================
-  Herramienta interactiva para visualizar tres estrategias
-  clásicas de gestión de memoria (particiones fijas, variables
-  y dinámicas) sobre un espacio direccionable de 16 MiB.
+  Herramienta interactiva para visualizar particiones fijas,
+  variables y dinámicas, además de segmentación no contigua,
+  sobre un espacio direccionable de 16 MiB.
 
   Estructura del proyecto:
     index.html   — este archivo: solo markup y metadatos.
@@ -43,13 +43,15 @@
       <div class="spec mono">2<sup>24</sup> B direccionables · <b>0x000000 – 0xFFFFFF</b> · multiprogramación con particiones</div>
       <div class="top-actions">
         <button class="btn sm" id="btn-escenario">Escenario de fragmentación</button>
+        <button class="btn sm" id="btn-escenario-nc" hidden>Escenario no contiguo</button>
         <button class="btn sm ghost" id="btn-reset">Reiniciar</button>
       </div>
     </div>
   </header>
 
   <section class="lead">
-    <div class="tabs" role="group" aria-label="Método de gestión de memoria">
+    <div class="method-heading">Memoria contigua <span>Un programa ocupa un solo bloque físico</span></div>
+    <div class="tabs" role="group" aria-label="Métodos de memoria contigua">
       <button class="tab" data-metodo="fija" aria-pressed="true">
         <span class="tt">1 · Estáticas de tamaño fijo</span>
         <span class="ts">Particiones iguales definidas al arrancar</span>
@@ -61,6 +63,13 @@
       <button class="tab" data-metodo="dinamica" aria-pressed="false">
         <span class="tt">3 · Particiones dinámicas</span>
         <span class="ts">Huecos a medida, con y sin compactación</span>
+      </button>
+    </div>
+    <div class="method-heading">Memoria no contigua <span>Los segmentos de un programa pueden ocupar direcciones físicas separadas</span></div>
+    <div class="tabs" role="group" aria-label="Métodos de memoria no contigua">
+      <button class="tab" data-metodo="segmentacion" aria-pressed="false">
+        <span class="tt">4 · Segmentación</span>
+        <span class="ts">Seis segmentos · mejor ajuste por segmento · tabla de direcciones</span>
       </button>
     </div>
 
@@ -80,15 +89,8 @@
           </div>
 
           <div class="field" id="f-fijas">
-            <span class="lbl">Número de particiones iguales</span>
-            <select id="n-fijas" aria-label="Número de particiones iguales">
-              <option value="2">2 particiones</option>
-              <option value="4">4 particiones</option>
-              <option value="7" selected>7 particiones</option>
-              <option value="8">8 particiones</option>
-              <option value="14">14 particiones</option>
-              <option value="16">16 particiones</option>
-            </select>
+            <label class="lbl" for="fijas-size">Tamaño de cada partición (KiB)</label>
+            <input type="number" id="fijas-size" min="64" step="64" value="2048" aria-describedby="fijas-hint">
             <p class="hint" id="fijas-hint"></p>
           </div>
 
@@ -108,6 +110,10 @@
             <label class="chk"><input type="checkbox" id="auto-compact"> Compactar automáticamente al fallar una asignación</label>
             <p class="hint">Sin compactación los huecos quedan dispersos: la memoria libre existe pero no es contigua.</p>
           </div>
+          <div class="field" id="f-segmentacion" hidden>
+            <span class="lbl">Asignación de segmentos</span>
+            <p class="hint">Cada segmento se coloca por mejor ajuste en un hueco libre. La carga del programa es completa o se rechaza entera.</p>
+          </div>
         </div>
       </div>
 
@@ -125,10 +131,10 @@
           <div class="field">
             <span class="lbl">Cola de trabajos</span>
             <div style="display:flex;gap:6px;flex-wrap:wrap">
-              <button class="btn primary sm" id="btn-cargar-todos">Cargar la cola completa</button>
-              <button class="btn sm" id="btn-liberar-todos">Liberar todo</button>
+              <button class="btn primary sm" id="btn-cargar-todos">Cargar una instancia de cada programa</button>
+              <button class="btn sm" id="btn-liberar-todos">Eliminar todas las instancias</button>
             </div>
-            <p class="hint">Los programas se intentan cargar en el orden de la tabla, como haría el planificador de trabajos.</p>
+            <p class="hint">Cada carga abre una instancia independiente del programa y ocupa memoria propia.</p>
           </div>
         </div>
       </div>
@@ -145,6 +151,7 @@
           <span><i class="i-libre"></i>Libre</span>
           <span><i class="i-frag"></i>Frag. interna</span>
           <span><i class="i-res"></i>No particionado</span>
+          <span id="legend-segmento" hidden><i class="i-seg"></i>Segmentos del programa seleccionado</span>
         </div>
         <div class="bd" style="padding:10px">
           <div class="mapa" id="mapa" aria-label="Bloques de memoria de 0x000000 a 0xFFFFFF"></div>
@@ -154,7 +161,7 @@
 
     <div style="display:grid;gap:16px;min-width:0">
       <div class="card" style="order:2">
-        <div class="hd"><h2>Bloque seleccionado</h2><span class="note">distribución interna de segmentos</span></div>
+        <div class="hd"><h2 id="detalle-title">Bloque seleccionado</h2><span class="note" id="detalle-note">distribución interna de segmentos</span></div>
         <div class="bd" id="detalle"></div>
       </div>
 
@@ -164,7 +171,7 @@
           <span class="note" id="prog-note"></span>
         </div>
         <div class="bd">
-          <div class="seglegend" style="margin-bottom:10px">
+          <div class="seglegend" id="prog-seglegend" style="margin-bottom:10px">
             <span><i class="s-cod"></i>Código</span>
             <span><i class="s-dat"></i>Datos</span>
             <span><i class="s-pil"></i>Pila</span>
@@ -177,8 +184,8 @@
                   <th>Programa</th>
                   <th>Segmentos</th>
                   <th style="text-align:right">Tamaño</th>
-                  <th style="text-align:right">Base</th>
-                  <th>Estado</th>
+                  <th style="text-align:right" id="progs-base-heading">Base</th>
+                  <th>Instancias</th>
                   <th></th>
                 </tr>
               </thead>
@@ -187,18 +194,27 @@
           </div>
 
           <details class="addprog">
-            <summary>Añadir un programa a la cola</summary>
+            <summary>Añadir un programa al catálogo</summary>
             <div class="form4 wide">
               <div class="f"><span>Nombre</span><input type="text" id="np-nombre" maxlength="28" placeholder="Servidor de correo"></div>
             </div>
-            <div class="form4">
+            <div class="form4" id="np-contigua-fields">
               <div class="f"><span>Código KiB</span><input type="number" id="np-cod" min="8" step="8" value="512"></div>
               <div class="f"><span>Datos KiB</span><input type="number" id="np-dat" min="8" step="8" value="256"></div>
               <div class="f"><span>Pila KiB</span><input type="number" id="np-pil" min="8" step="8" value="64"></div>
               <div class="f"><span>Heap KiB</span><input type="number" id="np-hea" min="8" step="8" value="128"></div>
             </div>
+            <div class="form4" id="np-segmentacion-fields" hidden>
+              <div class="f"><span>.text KiB</span><input type="number" id="np-text" min="1" step="1" value="384"></div>
+              <div class="f"><span>.rodata KiB</span><input type="number" id="np-rodata" min="1" step="1" value="128"></div>
+              <div class="f"><span>.data KiB</span><input type="number" id="np-data" min="1" step="1" value="192"></div>
+              <div class="f"><span>.bss KiB</span><input type="number" id="np-bss" min="1" step="1" value="64"></div>
+              <div class="f"><span>.stack KiB</span><input type="number" id="np-stack" min="1" step="1" value="64"></div>
+              <div class="f"><span>.heap KiB</span><input type="number" id="np-heap" min="1" step="1" value="128"></div>
+            </div>
+            <p class="hint" id="np-seg-note" hidden>Define el tamaño de las seis partes del programa. .rodata contiene datos de solo lectura.</p>
             <div style="margin-top:10px;display:flex;gap:8px;align-items:center">
-              <button class="btn sm primary" id="np-add">Añadir a la cola</button>
+              <button class="btn sm primary" id="np-add">Añadir al catálogo</button>
               <span class="hint" id="np-hint"></span>
             </div>
           </details>
@@ -206,7 +222,7 @@
       </div>
 
       <div class="card" style="order:3">
-        <div class="hd"><h2>Bitácora del gestor</h2><span class="note">lo más reciente primero</span></div>
+        <div class="hd"><h2>Bitácora del gestor</h2><span class="note">qué ocurrió y por qué · más reciente primero</span></div>
         <div class="log" id="log" role="log" aria-live="polite"></div>
       </div>
     </div>
@@ -214,7 +230,7 @@
 
   <footer class="foot">
     <span>Frag. interna = espacio perdido <em>dentro</em> de una partición asignada.</span>
-    <span>Frag. externa = memoria libre que no puede usarse por no ser contigua.</span>
+    <span>Frag. externa = memoria libre dispersa que puede impedir una asignación que necesite un bloque mayor.</span>
     <span class="mono">1 MiB = 1 024 KiB = 1 048 576 B</span>
   </footer>
 </div>

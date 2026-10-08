@@ -1,0 +1,424 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=2.2cm,headheight=16pt]{geometry}
+\usepackage[spanish,es-nodecimaldot]{babel}
+\usepackage{microtype}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage{enumitem}
+\usepackage{fancyhdr}
+\usepackage{lastpage}
+\usepackage{titlesec}
+\usepackage{amsmath}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning}
+\usepackage[most]{tcolorbox}
+\usepackage{hyperref}
+
+\definecolor{MemBlue}{HTML}{1F49C4}
+\definecolor{MemDark}{HTML}{161A21}
+\definecolor{MemGray}{HTML}{4B5563}
+\definecolor{MemLight}{HTML}{E7ECFA}
+\definecolor{MemGreen}{HTML}{0D7355}
+\definecolor{MemOrange}{HTML}{A06B06}
+\definecolor{MemRed}{HTML}{AE382C}
+
+\hypersetup{colorlinks=true,linkcolor=MemBlue,urlcolor=MemBlue,
+  pdftitle={Informe final del proyecto MemLab 16 MiB},pdfauthor={Informe del proyecto MemLab}}
+\pagestyle{fancy}
+\fancyhf{}
+\lhead{\sffamily\small MemLab 16 MiB}
+\rhead{\sffamily\small Informe final}
+\cfoot{\sffamily\small Página \thepage\ de \pageref{LastPage}}
+\titleformat{\section}{\Large\bfseries\sffamily\color{MemBlue}}{\thesection}{0.7em}{}
+\titleformat{\subsection}{\large\bfseries\sffamily\color{MemDark}}{\thesubsection}{0.7em}{}
+\setlist{nosep,leftmargin=*}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{5pt}
+\renewcommand{\arraystretch}{1.2}
+
+\newtcolorbox{ejecutivo}{colback=MemLight!55,colframe=MemBlue!70!black,
+  boxrule=0.7pt,arc=2mm,title=Resumen ejecutivo,fonttitle=\bfseries\sffamily}
+\newtcolorbox{conclusionbox}{colback=MemGreen!6,colframe=MemGreen!70!black,
+  boxrule=0.7pt,arc=2mm,title=Conclusión,fonttitle=\bfseries\sffamily}
+\newcommand{\archivo}[1]{\texttt{#1}}
+
+\begin{document}
+
+\begin{titlepage}
+  \centering
+  \vspace*{2.0cm}
+  {\sffamily\bfseries\fontsize{34}{39}\selectfont\color{MemBlue} MemLab 16 MiB\par}
+  \vspace{0.5cm}
+  {\sffamily\fontsize{23}{28}\selectfont Informe final del proyecto\par}
+  \vspace{0.8cm}
+  {\Large Simulador educativo de gestión de memoria principal\par}
+  \vfill
+  \begin{tabular}{rl}
+    \textbf{Fecha de evaluación:} & 21 de septiembre de 2026\\
+    \textbf{Commit base:} & \texttt{20cec7a}\\
+    \textbf{Estado evaluado:} & copia de trabajo local actual\\
+    \textbf{Tecnologías:} & HTML5, CSS y JavaScript\\
+  \end{tabular}
+  \vfill
+  {\small Informe de cierre elaborado mediante inspección del código y validaciones no invasivas.\par}
+\end{titlepage}
+
+\tableofcontents
+\newpage
+
+\section{Resumen ejecutivo}
+
+\begin{ejecutivo}
+MemLab 16 MiB cumple su propósito central como herramienta didáctica para explorar
+asignación contigua de memoria. La aplicación implementa tres esquemas de
+particionado, tres algoritmos de ajuste, liberación y coalescencia de huecos,
+compactación manual/automática, métricas y trazabilidad mediante bitácora. Su
+arquitectura estática reduce las barreras de ejecución y despliegue. La evaluación
+detectó una exposición de inserción HTML en la bitácora, algunos casos límite de
+mensajería/configuración y ausencia de pruebas automatizadas; son oportunidades de
+mejora, no impedimentos para el uso educativo local controlado.
+\end{ejecutivo}
+
+\section{Contexto y problema abordado}
+
+Los conceptos de fragmentación y selección de particiones suelen presentarse como
+diagramas estáticos. El proyecto transforma esos conceptos en un laboratorio
+interactivo: el estudiante modifica límites del sistema operativo, particiones,
+políticas y trabajos, y observa cómo cambian direcciones, utilización, desperdicio
+y admisiones.
+
+El espacio simulado contiene 16 MiB, equivalentes a \(2^{24}\) bytes. La porción
+inicial pertenece al sistema operativo y el resto se administra mediante:
+
+\begin{enumerate}
+  \item particiones estáticas iguales;
+  \item particiones estáticas de tamaños variables;
+  \item particiones dinámicas con fusión y compactación.
+\end{enumerate}
+
+\section{Objetivos del proyecto}
+
+\subsection{Objetivo general}
+
+Proporcionar una aplicación web comprensible y manipulable que permita visualizar
+la asignación contigua de memoria y contrastar sus algoritmos y formas de
+fragmentación.
+
+\subsection{Objetivos específicos observados}
+
+\begin{itemize}
+  \item representar direcciones físicas y tamaños en unidades binarias;
+  \item modelar procesos con segmentos de código, datos, pila y heap;
+  \item aplicar primer, mejor y peor ajuste donde corresponda;
+  \item mostrar fragmentación interna y externa mediante mapa y KPI;
+  \item permitir liberación, fusión de huecos y compactación;
+  \item explicar cada decisión relevante en una bitácora;
+  \item ejecutarse sin backend ni construcción previa;
+  \item adaptarse a tema del sistema y pantallas estrechas.
+\end{itemize}
+
+\section{Alcance realizado}
+
+\begin{longtable}{p{0.32\textwidth}p{0.18\textwidth}p{0.38\textwidth}}
+\toprule
+\textbf{Capacidad} & \textbf{Estado} & \textbf{Implementación observada}\\
+\midrule
+\endhead
+Espacio de 16 MiB & Implementado & Constantes binarias y direcciones hexadecimales de 24 bits.\\
+Reserva de S.O. & Implementado & Opciones de 1, 2 y 4 MiB al inicio del mapa.\\
+Particiones fijas & Implementado & 2 a 16 particiones según opciones, redondeo a 4 KiB.\\
+Particiones variables & Implementado & Tabla editable en KiB y zona no particionada.\\
+Particiones dinámicas & Implementado & División exacta de huecos y cero fragmentación interna.\\
+Tres algoritmos & Implementado & Primer, mejor y peor ajuste por recorrido lineal.\\
+Liberación y fusión & Implementado & Coalescencia de huecos dinámicos contiguos.\\
+Compactación & Implementado & Manual y automática al fallar por discontinuidad.\\
+Métricas & Implementado & Utilización, dos fragmentaciones, mayor bloque y procesos.\\
+Programas personalizados & Implementado & Nombre y cuatro segmentos en KiB.\\
+Escenario pedagógico & Implementado & Carga y liberación alternada para producir huecos.\\
+Persistencia & Fuera del alcance actual & Todo el estado se pierde al recargar.\\
+Backend / cuentas & Fuera del alcance actual & La aplicación es completamente estática.\\
+Suite de pruebas & No incluida & No hay infraestructura ni casos automatizados en el repositorio.\\
+\bottomrule
+\end{longtable}
+
+\section{Solución construida}
+
+\subsection{Estructura}
+
+\begin{center}
+\begin{tikzpicture}[
+  node distance=12mm,
+  box/.style={draw=MemBlue!65,rounded corners,fill=MemLight!55,
+    minimum width=46mm,minimum height=12mm,align=center,font=\sffamily\small},
+  arr/.style={-{Latex[length=2.3mm]},thick,color=MemBlue!75}
+]
+\node[box] (html) {\archivo{index.html}\\estructura y controles};
+\node[box,below left=of html] (css) {\archivo{css/style.css}\\presentación y respuesta};
+\node[box,below right=of html] (js) {\archivo{js/script.js}\\modelo, algoritmos y DOM};
+\node[box,below=18mm of html] (browser) {Navegador\\ejecución completa};
+\draw[arr] (html)--(css);
+\draw[arr] (html)--(js);
+\draw[arr] (css)--(browser);
+\draw[arr] (js)--(browser);
+\end{tikzpicture}
+\end{center}
+
+El README completa el conjunto con instrucciones y descripción conceptual. No hay
+archivos de configuración, dependencias de aplicación ni compilación.
+
+\subsection{Arquitectura funcional}
+
+El JavaScript está encapsulado en una IIFE con estado mutable privado. Los eventos
+DOM llaman reglas de negocio sincrónicas; cada cambio termina en un renderizado
+integral o parcial. La interfaz se deriva del estado, por lo que el mapa, los KPI,
+la tabla y la bitácora se mantienen coordinados.
+
+La decisión de regenerar \texttt{innerHTML} es suficiente para el volumen actual y
+evita complejidad de framework. A cambio, el dominio queda acoplado al DOM y es más
+difícil probarlo de forma aislada.
+
+\subsection{Modelo de memoria}
+
+El arreglo \texttt{mem} mantiene bloques ordenados con base, tamaño, tipo y PID.
+Los procesos incluyen cuatro segmentos, tamaño agregado, estado y ubicación. La
+configuración activa define método, algoritmo, reserva del S.O., particiones y
+compactación automática.
+
+La configuración inicial reserva 2 MiB y crea siete particiones de 2 MiB. De los
+ocho trabajos, cuatro se cargan durante el arranque. El catálogo total requiere
+18\,880 KiB y la memoria de usuario predeterminada ofrece 14\,336 KiB, lo que
+garantiza decisiones visibles de admisión y rechazo.
+
+\section{Algoritmos implementados}
+
+\subsection{Asignación}
+
+El proceso general filtra bloques libres con capacidad suficiente y selecciona uno:
+
+\begin{itemize}
+  \item primer ajuste: primer candidato en orden de dirección;
+  \item mejor ajuste: candidato de menor capacidad válida;
+  \item peor ajuste: candidato de mayor capacidad válida.
+\end{itemize}
+
+En particiones fijas iguales se fuerza la primera disponible. En dinámica, el hueco
+se divide para que el bloque ocupado tenga exactamente el tamaño del proceso.
+
+\subsection{Liberación y compactación}
+
+Una liberación estática limpia el PID, sin alterar límites. Una liberación dinámica
+convierte el bloque en hueco y combina vecinos. La compactación ordena los procesos
+por dirección y los desplaza hacia el final del S.O.; todo el espacio disponible
+queda, si existe, en un hueco final.
+
+La compactación automática solo se intenta cuando el total libre es suficiente
+pero ningún hueco individual alcanza. Este criterio distingue correctamente falta
+de capacidad total de falta de continuidad.
+
+\subsection{Indicadores}
+
+La utilización se calcula sobre memoria de usuario y solo suma tamaños útiles de
+procesos. La fragmentación interna suma sobrantes dentro de bloques ocupados. En
+dinámica, la fragmentación externa se define como libre total menos el hueco más
+grande. En estáticas, el proyecto contabiliza como externa toda partición libre no
+combinable, una convención pedagógica documentada en la interfaz.
+
+\section{Experiencia de usuario}
+
+La página organiza la experiencia en cinco niveles:
+
+\begin{enumerate}
+  \item método y acciones globales;
+  \item configuración y algoritmo;
+  \item KPI de lectura inmediata;
+  \item mapa, detalle y tabla de trabajos;
+  \item bitácora explicativa.
+\end{enumerate}
+
+El mapa usa altura proporcional al tamaño real y adapta la cantidad de texto cuando
+un bloque es pequeño. Los colores diferencian procesos y segmentos; los patrones
+identifican fragmentación y espacio reservado. En pantallas de hasta 900 px, la
+disposición pasa a una columna.
+
+La interfaz incorpora etiquetas ARIA, estados \texttt{aria-pressed}, foco visible,
+región activa para la bitácora, tema oscuro y consideración de movimiento reducido.
+
+\section{Metodología de evaluación}
+
+La revisión final fue deliberadamente no invasiva:
+
+\begin{enumerate}
+  \item inventario completo del repositorio y lectura de sus cuatro archivos;
+  \item trazado de las 33 funciones declaradas y sus efectos sobre el estado;
+  \item revisión de fórmulas, rangos, estados y eventos;
+  \item comprobación sintáctica con Node.js;
+  \item servicio temporal por HTTP y solicitud de HTML, CSS y JS;
+  \item comparación automática de selectores \texttt{\#id} frente al HTML;
+  \item cálculo independiente de tamaños de catálogo y configuración predeterminada;
+  \item registro de huellas SHA-256 de los archivos originales para verificar que
+  la generación documental no los modificara.
+\end{enumerate}
+
+Se intentó preparar una validación con navegador automatizado conforme a la guía de
+pruebas disponible, pero el entorno no contiene la dependencia Python Playwright.
+No se instaló en el proyecto para respetar el alcance de ``solo entregables''.
+
+\section{Resultados de validación}
+
+\begin{longtable}{p{0.32\textwidth}p{0.17\textwidth}p{0.39\textwidth}}
+\toprule
+\textbf{Comprobación} & \textbf{Resultado} & \textbf{Detalle}\\
+\midrule
+\endhead
+Sintaxis JavaScript & Aprobada & Node.js no reportó errores de análisis.\\
+Disponibilidad HTTP & Aprobada & Los tres recursos ejecutables respondieron 200.\\
+Tipos MIME & Aprobada & HTML, CSS y JavaScript fueron servidos con tipos correspondientes.\\
+Integridad de IDs & Aprobada & 33 IDs únicos y ningún selector auxiliar faltante.\\
+Catálogo de programas & Verificado & Totales recalculados a partir de los cuatro segmentos.\\
+Tamaño fijo inicial & Verificado & 14 MiB / 7 = 2 MiB por partición.\\
+Tabla variable inicial & Verificada & Los seis tamaños suman 14\,336 KiB.\\
+Prueba end-to-end real & Pendiente & No disponible Playwright en el entorno.\\
+\bottomrule
+\end{longtable}
+
+\section{Evaluación de calidad}
+
+\begin{longtable}{p{0.24\textwidth}p{0.17\textwidth}p{0.49\textwidth}}
+\toprule
+\textbf{Atributo} & \textbf{Valoración} & \textbf{Fundamento}\\
+\midrule
+\endhead
+Adecuación funcional & Alta & Cubre métodos, ajustes, métricas, escenarios y explicación de decisiones.\\
+Comprensibilidad & Alta & Código comentado, nombres descriptivos y bitácora pedagógica.\\
+Portabilidad & Alta & Archivos estáticos sin construcción ni backend.\\
+Rendimiento & Adecuado & Recorridos lineales y render total sobre conjuntos pequeños.\\
+Mantenibilidad & Media-alta & Separación por funciones, aunque modelo y DOM comparten un único módulo.\\
+Accesibilidad & Media-alta & Buenas bases ARIA y CSS; falta verificación formal con herramientas/lectores.\\
+Seguridad & Media & Superficie pequeña, pero existe inserción HTML en la bitácora.\\
+Testabilidad & Media-baja & No hay pruebas y el estado privado está acoplado al navegador.\\
+Observabilidad & Alta para docencia & La bitácora explica causas y efectos hasta 80 eventos.\\
+\bottomrule
+\end{longtable}
+
+\section{Hallazgos, riesgos y limitaciones}
+
+\subsection{Prioridad alta}
+
+\textbf{Riesgo de XSS DOM en nombres personalizados.} El nombre se escapa al
+mostrarlo en mapa, detalle y tabla, pero se concatena sin escape a un mensaje de la
+bitácora, que luego se inserta mediante \texttt{innerHTML}. El riesgo es limitado
+en uso local individual, pero debe corregirse antes de aceptar datos no confiables
+o publicar la aplicación en un entorno compartido.
+
+\subsection{Prioridad media}
+
+\begin{itemize}
+  \item al aumentar el tamaño del S.O., la tabla variable puede sumar más que la
+  memoria disponible; el constructor omite desde la primera partición que no cabe,
+  pero el texto de suma sigue considerando toda la configuración;
+  \item algunos mensajes de rechazo del modo fijo pueden atribuir el fallo a
+  ocupación total cuando existen particiones libres pero demasiado pequeñas;
+  \item compactar una memoria totalmente llena puede registrar ``1 hueco de 0 KiB''
+  aunque no se agregue un bloque de hueco;
+  \item no existe persistencia ni exportación de escenario/bitácora;
+  \item no hay pruebas automatizadas de regresión.
+\end{itemize}
+
+\subsection{Prioridad baja o pedagógica}
+
+\begin{itemize}
+  \item la denominación de fragmentación externa en esquemas estáticos es una
+  simplificación didáctica que debe explicarse al compararla con otras fuentes;
+  \item \texttt{color-mix} puede degradar la apariencia en navegadores antiguos;
+  \item la lista de eventos se limita a 80 y no representa tiempo real;
+  \item el sistema simula asignación contigua y no cubre paginación, segmentación
+  no contigua, memoria virtual, swapping ni traducción mediante MMU.
+\end{itemize}
+
+\section{Entregables documentales}
+
+Como parte del cierre se produjeron, sin modificar el código fuente:
+
+\begin{longtable}{p{0.32\textwidth}p{0.55\textwidth}}
+\toprule
+\textbf{Entregable} & \textbf{Contenido}\\
+\midrule
+\endhead
+Manual técnico (LaTeX y PDF) & Arquitectura, datos, algoritmos, fórmulas, catálogo de funciones, eventos, ejecución, despliegue, validación, riesgos y mantenimiento.\\
+Manual de usuario (LaTeX y PDF) & Instalación, recorrido, operación paso a paso, ejercicios, solución de problemas y glosario.\\
+Informe final (LaTeX y PDF) & Objetivos, alcance, solución, evaluación, resultados, calidad, riesgos y recomendaciones.\\
+\bottomrule
+\end{longtable}
+
+Los tres fuentes LaTeX son autónomos y reproducibles con un motor XeLaTeX moderno
+o Tectonic, sujeto a disponibilidad de los paquetes estándar declarados.
+
+\section{Recomendaciones}
+
+\subsection{Corto plazo}
+
+\begin{enumerate}
+  \item eliminar la inserción HTML no escapada; preferir \texttt{textContent} o
+  escapar el mensaje completo de bitácora;
+  \item añadir pruebas unitarias para tamaños, selección, fusión y métricas;
+  \item cubrir los casos límite de mensajes y compactación sin espacio libre;
+  \item validar/ajustar la tabla variable al cambiar la reserva del S.O.;
+  \item documentar expresamente la convención de fragmentación externa estática.
+\end{enumerate}
+
+\subsection{Mediano plazo}
+
+\begin{enumerate}
+  \item extraer el dominio a un módulo JavaScript puro y dejar el DOM como adaptador;
+  \item incorporar una suite end-to-end con escenarios reproducibles;
+  \item permitir exportar/importar configuración, trabajos y bitácora;
+  \item incluir un modo de comparación lado a lado entre algoritmos;
+  \item ejecutar auditorías automatizadas de accesibilidad y compatibilidad móvil.
+\end{enumerate}
+
+\subsection{Extensiones académicas}
+
+\begin{itemize}
+  \item siguiente ajuste (\emph{next fit}) y listas libres ordenadas;
+  \item paginación, tablas de páginas y fallos de página;
+  \item segmentación con protección y compartición;
+  \item costo temporal de compactación y reubicación;
+  \item generación de cargas aleatorias con métricas comparativas.
+\end{itemize}
+
+\section{Integridad del código fuente}
+
+Antes de producir los documentos se registraron las siguientes huellas:
+
+\begin{longtable}{p{0.21\textwidth}p{0.68\textwidth}}
+\toprule
+\textbf{Archivo} & \textbf{SHA-256 inicial}\\
+\midrule
+\endhead
+\archivo{README.md} & \texttt{b00fcb9c6884db5620871af1cc4c5b36}\allowbreak\texttt{fcec4d064e7b4008b878589c7f9e131a}\\
+\archivo{index.html} & \texttt{67277c06878c8ee2f17b20d6b2a92f5c}\allowbreak\texttt{a0de73367ba3dcb3cf4e67f600e6b37c}\\
+\archivo{css/style.css} & \texttt{083eaae30a30cc87688f7eb674c7a4732}\allowbreak\texttt{613a009e279b7b18eb6c2097c7c79f3}\\
+\archivo{js/script.js} & \texttt{70cead1c39347565160049b735fcca059}\allowbreak\texttt{16dbcf603c264c4ccb0e9b61f88f3ba}\\
+\bottomrule
+\end{longtable}
+
+Estas huellas sirven para comparar el estado posterior y demostrar que la tarea de
+documentación creó únicamente los entregables solicitados.
+
+\section{Conclusión final}
+
+\begin{conclusionbox}
+El proyecto está completo y coherente como simulador educativo estático de
+asignación contigua. Su principal fortaleza es convertir cada operación en una
+representación visual y una explicación rastreable. La base técnica es pequeña,
+portable y suficientemente clara para enseñanza. Antes de una publicación abierta
+o una ampliación funcional conviene corregir el manejo HTML de la bitácora,
+formalizar pruebas y separar el dominio de la capa de presentación. Los manuales y
+este informe dejan documentado tanto el funcionamiento actual como la ruta de
+evolución recomendada.
+\end{conclusionbox}
+
+\end{document}
