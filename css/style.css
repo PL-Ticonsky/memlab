@@ -136,6 +136,8 @@
   /* ---------- Controles: pestañas de método + tarjetas de configuración ---------- */
   .lead{padding-block:18px 14px;display:grid;gap:14px}
   .tabs{display:flex;flex-wrap:wrap;gap:6px;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:6px;box-shadow:var(--shadow)}
+  .tabs-nc{flex-direction:column}
+  .tabs-nc .tab{flex:0 0 auto;width:100%}
   .tab{
     flex:1 1 180px;min-width:0;text-align:left;
     border:0;border-radius:7px;background:transparent;cursor:pointer;
@@ -260,6 +262,14 @@
   .blk.related{outline:2px solid var(--pc);outline-offset:1px;border-left-color:var(--pc)}
   .blk:hover{border-color:var(--accent)}
 
+  /* En paginación cada fila representa un marco completo. La altura fija
+     mantiene navegables las configuraciones de hasta 512 marcos. */
+  .mapa.paging-map{gap:1px}
+  .paging-map .blk{flex:0 0 25px;min-height:25px;border-radius:3px}
+  .paging-map .blk .in{min-height:0;flex-direction:row;align-items:center;justify-content:space-between;padding:2px 7px;gap:8px}
+  .paging-map .blk .l1{font-size:10px}
+  .paging-map .blk .l2{font-size:10.5px;max-width:48%}
+
   .ifrag{
     flex:0 0 auto;flex-basis:0;min-height:5px;overflow:hidden;
     border-top:1px dashed color-mix(in srgb,var(--warn) 60%, transparent);
@@ -334,6 +344,15 @@
   .segment-table{margin-top:8px}
   .segment-table td{white-space:nowrap}
   .segment-foot{margin:10px 0 0}
+  .frame-scroll{max-height:440px;overflow:auto}
+  .page-scroll{max-height:340px;overflow:auto}
+  .frame-scroll thead,.page-scroll thead{position:sticky;top:0;background:var(--surface);z-index:1}
+  .frame-scroll .tbl td,.page-scroll .tbl td{padding-block:5px;white-space:nowrap}
+  .translator{margin-top:16px;padding:12px;background:var(--surface-2);border:1px solid var(--line);border-radius:8px}
+  .translator .addrow{margin-top:7px}
+  .translator .hint{margin:7px 0 0}
+  .translator .error{color:var(--danger)}
+  .translator .success{color:var(--ok)}
 
   /* ---------- Bitácora: lista de eventos del gestor de memoria (asigna/libera/rechazo/compacta) ---------- */
   .log{max-height:300px;overflow-y:auto;display:grid;gap:0;font-family:"IBM Plex Mono",monospace;font-size:11.5px}

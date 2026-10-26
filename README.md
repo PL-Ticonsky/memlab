@@ -3,7 +3,7 @@
 Simulador interactivo de **gestión de memoria principal** sobre un espacio
 direccionable de 16 MiB (`2^24` bytes, `0x000000`–`0xFFFFFF`), pensado como
 material de estudio para sistemas operativos: particiones fijas, variables
-y dinámicas, segmentación, algoritmos de ajuste, fragmentación interna/externa
+y dinámicas, segmentación, paginación, algoritmos de ajuste, fragmentación interna/externa
 y compactación.
 
 No tiene backend ni dependencias de build: es HTML + CSS + JavaScript
@@ -38,7 +38,7 @@ No requiere servidor ni instalación:
 
 El sistema modela 16 MiB de memoria física, de los cuales una porción
 inicial (configurable: 1, 2 o 4 MiB) está reservada para el sistema
-operativo. El resto ("memoria de usuario") se gestiona con uno de tres
+operativo. El resto ("memoria de usuario") se gestiona con uno de cinco
 métodos, agrupados en memoria contigua y no contigua:
 
 ### 1 · Particiones estáticas de tamaño fijo
@@ -98,6 +98,51 @@ Los programas de ejemplo conservan sus tamaños originales: código se
 desglosa en `.text` y `.rodata`, y datos en `.data` y `.bss`. Al añadir un
 programa en segmentación puedes definir directamente los seis tamaños.
 
+### 5 · Paginación (memoria no contigua)
+
+La RAM se divide en marcos físicos de 32, 64, 128 o 256 KiB. El tamaño
+predeterminado es **64 KiB**: 16 MiB dan 256 marcos. Con 1 MiB para el
+S.O., 16 marcos quedan reservados y 240 disponibles. La reserva también
+puede ser de 2 o 4 MiB. Cambiar el tamaño de página o la reserva
+reconstruye la memoria y cierra las instancias activas.
+
+Cada instancia tiene su propia tabla de páginas. Se reutilizan las seis
+regiones de segmentación: `.text`, `.rodata`, `.data`, `.bss`, `.stack` y
+`.heap`. **Decisión del modelo educativo:** cada región empieza en un
+límite de página, de modo que una página corresponde a una sola región.
+Para una región de `S` bytes se crean `ceil(S / P)` páginas, donde `P` es
+el tamaño de página. La última puede tener relleno. La numeración de
+páginas es consecutiva dentro de la instancia y comienza en cero.
+
+La asignación usa **primer marco libre** en orden de dirección física.
+Antes de ocupar ningún marco se comprueba que quepan todas las páginas;
+si faltan marcos, se rechaza la carga completa. No hay memoria secundaria,
+paginación por demanda ni reemplazo: toda página de una instancia cargada
+está presente. Al eliminarla se liberan únicamente sus marcos. Los marcos
+de distintas instancias pueden intercalarse; no se necesita compactación.
+
+La tabla global muestra número, base física, estado, instancia propietaria
+y página lógica de cada marco. Al seleccionar una instancia se resaltan
+sus marcos y aparecen su tabla de páginas, páginas requeridas, memoria
+lógica utilizada, memoria física asignada y fragmentación interna. Esta
+última es la suma de `ceil(S_i / P) × P − S_i` para las seis regiones.
+La utilización usa memoria física asignada dividida por RAM de usuario
+(`16 MiB − reserva del S.O.`). No se reporta fragmentación externa para
+este método, porque cualquier marco libre puede usarse.
+
+El traductor admite direcciones lógicas decimales o hexadecimales con
+prefijo `0x`. Calcula `p = floor(D / P)` y `d = D mod P`, consulta la tabla
+de páginas de la instancia y obtiene la dirección física `marco × P + d`.
+La dirección lógica se interpreta en el espacio paginado con alineaciones
+entre regiones. Se rechazan las direcciones fuera de ese espacio y los
+bytes de relleno de las últimas páginas.
+
+El **Escenario de paginación** carga varias instancias, elimina una
+intermedia y carga otra más grande. Esta reutiliza los marcos liberados y
+continúa después de una instancia que sigue activa, mostrando páginas
+físicamente separadas. El catálogo se conserva y las operaciones quedan
+en la bitácora.
+
 ## Elementos de la interfaz
 
 - **Mapa de memoria**: representa los 16 MiB como una columna de bloques
@@ -107,7 +152,8 @@ programa en segmentación puedes definir directamente los seis tamaños.
   segmentación, señala los seis bloques de un programa seleccionado.
 - **KPIs**: utilización de memoria, fragmentación interna, fragmentación
   externa o espacio libre disperso, tamaño del mayor bloque libre y
-  cantidad de instancias cargadas.
+  cantidad de instancias cargadas. En paginación se muestran marcos
+  totales, reservados, ocupados y libres, junto con memoria lógica y física.
 - **Programas simulados**: catálogo de 8 programas de ejemplo, ampliable
   con programas propios. El catálogo permite abrir tantas instancias
   como admita la memoria. Debajo aparecen las instancias cargadas, cada

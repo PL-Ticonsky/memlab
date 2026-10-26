@@ -3,7 +3,7 @@
    ============================================================
    Simula un espacio de direcciones de 16 MiB (2^24 bytes,
    0x000000–0xFFFFFF) bajo multiprogramación con particiones,
-   soportando cuatro métodos de gestión de memoria clásicos:
+   soportando cinco métodos de gestión de memoria clásicos:
 
      1. Particiones ESTÁTICAS de tamaño FIJO
         Se divide la memoria de usuario en N particiones
@@ -28,6 +28,11 @@
         El programa tiene seis segmentos lógicos. Cada uno se
         asigna a un hueco físico por mejor ajuste, con una tabla
         que relaciona número, base y tamaño.
+
+     5. PAGINACIÓN no contigua
+        Divide las seis regiones en páginas y la RAM en marcos.
+        Asigna cada página al primer marco libre y conserva una
+        tabla de páginas independiente por instancia.
 
    No usa frameworks: es JS vainilla que manipula el DOM
    directamente. El estado vive en variables de módulo dentro
@@ -93,7 +98,8 @@
     so: 2 * MiB,
     tamFija: 2048 * KiB,
     variables: [512, 1024, 1536, 2048, 3072, 6144],
-    autoCompact: false
+    autoCompact: false,
+    tamPagina: 64 * KiB
   };
 
   var mem = [], progs = [], bitacora = [], reloj = 0, sel = null, selProg = null, selPlantilla = null;
@@ -179,11 +185,13 @@
   /* ============ Construcción de memoria ============
      construirMemoria() reconstruye el arreglo `mem` desde cero
      cada vez que cambia el método o la configuración:
-       - Siempre reserva el bloque de S.O. al inicio (base 0).
+       - En métodos anteriores reserva un bloque de S.O. al inicio.
        - Método "fija": tantas particiones como quepan del
          tamaño definido por el usuario (tamFija()).
        - Método "variable": una partición por cada tamaño en
          cfg.variables, en el orden dado.
+       - "paginacion": un marco por página física, incluidos los
+         marcos reservados al S.O.
        - Métodos "dinamica" y "segmentacion": un único hueco
          gigante que se parte a medida que se asigna memoria.
        - Si sobra espacio sin cubrir por las particiones, se
@@ -197,7 +205,7 @@
   function construirMemoria(motivo){
     var cerradas = instancias().length;
     mem = [];
-    mem.push({ id:uid++, base:0, size:cfg.so, tipo:"so", pid:null, fija:true });
+    if (cfg.metodo !== "paginacion") mem.push({ id:uid++, base:0, size:cfg.so, tipo:"so", pid:null, fija:true });
     var base = cfg.so, i;
 
     if (cfg.metodo === "fija"){
@@ -214,6 +222,13 @@
         mem.push({ id:uid++, base:base, size:s, tipo:"particion", idx:i+1, pid:null, fija:true });
         base += s;
       }
+    } else if (cfg.metodo === "paginacion"){
+      for (i=0;i<Math.floor(TOTAL / cfg.tamPagina);i++){
+        mem.push({ id:uid++, numero:i, base:i * cfg.tamPagina, size:cfg.tamPagina,
+          tipo:"marco", estado:i * cfg.tamPagina < cfg.so ? "so" : "libre",
+          pid:null, pagina:null, fija:true });
+      }
+      base = TOTAL;
     } else {
       mem.push({ id:uid++, base:base, size:TOTAL - base, tipo:"hueco", pid:null, fija:false });
       base = TOTAL;
@@ -287,6 +302,9 @@
     var plantilla = prog(id);
     if (!plantilla || plantilla.instancia) return null;
     var p = nuevaInstancia(plantilla);
+    if (cfg.metodo === "paginacion"){
+      return cargarPaginado(p, silencioso) ? registrarInstancia(plantilla, p) : null;
+    }
     if (cfg.metodo === "segmentacion"){
       return cargarSegmentado(p, silencioso) ? registrarInstancia(plantilla, p) : null;
     }
@@ -375,9 +393,63 @@
     return true;
   }
 
+  /* Modelo educativo: cada región comienza en un límite de página.
+     Así una página pertenece a una única región; su último marco
+     puede contener relleno que no forma parte del espacio lógico válido. */
+  function calcularPaginas(p){
+    var tabla = [], regiones = [], inicio = 0, pageSize = cfg.tamPagina;
+    SEG6.forEach(function(s){
+      var bytes = p.seg6[s.k] * KiB;
+      var cantidad = Math.ceil(bytes / pageSize);
+      regiones.push({ nombre:s.n, inicio:inicio, size:bytes, paginas:cantidad });
+      for (var j=0;j<cantidad;j++){
+        tabla.push({ numeroPagina:tabla.length, numeroMarco:null, presente:false,
+          segmento:s.n, bytesUtilizados:Math.min(pageSize, bytes - j * pageSize) });
+      }
+      inicio += cantidad * pageSize;
+    });
+    return { tabla:tabla, regiones:regiones, espacioLogico:inicio };
+  }
+
+  function cargarPaginado(p, silencioso){
+    var plan = calcularPaginas(p);
+    var libres = mem.filter(function(b){ return b.tipo === "marco" && b.estado === "libre"; });
+    if (libres.length < plan.tabla.length){
+      addLog("rechazo", p.etq + " rechazado: requiere " + plan.tabla.length + " marcos y hay " +
+        libres.length + " libres. No se asignó ninguna página.");
+      return false;
+    }
+    // La planificación se completa antes de mutar mem: una carga fallida no deja marcos ocupados.
+    var elegidos = libres.slice(0, plan.tabla.length);
+    for (var i=0;i<elegidos.length;i++){
+      plan.tabla[i].numeroMarco = elegidos[i].numero;
+      plan.tabla[i].presente = true;
+    }
+    elegidos.forEach(function(b, i){ b.estado = "ocupado"; b.pid = p.pid; b.pagina = i; });
+    p.estado = "cargado"; p.tabla = plan.tabla; p.regiones = plan.regiones;
+    p.espacioLogico = plan.espacioLogico; p.base = null; p.blk = null;
+    if (!silencioso) addLog("asigna", p.etq + " cargado: " + plan.tabla.length +
+      " páginas → primeros marcos libres " + elegidos.map(function(b){ return b.numero; }).join(", ") +
+      "; " + fmt(plan.espacioLogico - p.size) + " de fragmentación interna.");
+    return true;
+  }
+
   function liberar(id, silencioso){
     var p = prog(id);
     if (!p || !p.instancia || p.estado !== "cargado") return;
+    if (cfg.metodo === "paginacion"){
+      var numeros = p.tabla.map(function(e){ return e.numeroMarco; });
+      p.tabla.forEach(function(e){
+        var b = mem[e.numeroMarco];
+        if (b && b.tipo === "marco" && b.pid === p.pid && b.pagina === e.numeroPagina){
+          b.estado = "libre"; b.pid = null; b.pagina = null;
+        }
+      });
+      olvidarInstancia(p);
+      if (!silencioso) addLog("libera", p.etq + " termina: libera " + numeros.length +
+        " marcos (" + numeros.join(", ") + "); las demás instancias permanecen cargadas.");
+      return;
+    }
     if (cfg.metodo === "segmentacion"){
       var segmentos = mem.filter(function(b){ return b.pid === p.pid; });
       segmentos.forEach(function(b){ b.pid = null; b.seg = null; b.tipo = "hueco"; });
@@ -407,7 +479,11 @@
   function olvidarInstancia(p){
     var indice = progs.indexOf(p);
     if (indice !== -1) progs.splice(indice, 1);
-    if (selProg === p.pid){ selProg = null; selPlantilla = cfg.metodo === "segmentacion" ? p.plantilla : null; }
+    if (selProg === p.pid){ selProg = null; selPlantilla = (cfg.metodo === "segmentacion" || cfg.metodo === "paginacion") ? p.plantilla : null; }
+    if (cfg.metodo === "paginacion" && sel !== null){
+      var seleccionado = mem.find(function(b){ return b.id === sel; });
+      if (seleccionado && seleccionado.pid === null) sel = null;
+    }
   }
 
   function fusionar(){
@@ -466,6 +542,20 @@
          externa porque no se pueden combinar).
        - util: porcentaje de utilización de la memoria de usuario. */
   function metricas(){
+    if (cfg.metodo === "paginacion"){
+      var ocupados = mem.filter(function(b){ return b.estado === "ocupado"; }).length;
+      var soMarcos = mem.filter(function(b){ return b.estado === "so"; }).length;
+      var libresMarcos = mem.length - ocupados - soMarcos;
+      var logica = instancias().reduce(function(a,p){ return a + p.size; }, 0);
+      var fisica = ocupados * cfg.tamPagina;
+      var usuarioPag = TOTAL - cfg.so;
+      return { usuario:usuarioPag, usado:fisica, fragInt:fisica-logica,
+        libreTotal:libresMarcos * cfg.tamPagina, mayor:libresMarcos ? cfg.tamPagina : 0,
+        huecos:libresMarcos, reservado:0, fragExt:0, cargados:instancias().length,
+        cola:plantillas().length, util:usuarioPag ? fisica / usuarioPag : 0,
+        totalMarcos:mem.length, soMarcos:soMarcos, ocupadosMarcos:ocupados,
+        libresMarcos:libresMarcos, logica:logica, fisica:fisica };
+    }
     var usuario = TOTAL - cfg.so, usado = 0, fragInt = 0, i, p;
     for (i=0;i<mem.length;i++){
       if (mem[i].pid !== null){
@@ -507,6 +597,7 @@
     renderMapa();
     renderDetalle();
     renderProgs();
+    renderMarcos();
     renderLog();
   }
 
@@ -515,18 +606,20 @@
     for (var i=0;i<t.length;i++) t[i].setAttribute("aria-pressed", String(t[i].dataset.metodo === cfg.metodo));
     var a = document.querySelectorAll("#algo button");
     for (i=0;i<a.length;i++){
-      a[i].setAttribute("aria-pressed", String(a[i].dataset.algo === (cfg.metodo === "segmentacion" ? "mejor" : cfg.algo)));
-      a[i].disabled = cfg.metodo === "fija" || cfg.metodo === "segmentacion";
+      a[i].setAttribute("aria-pressed", String(a[i].dataset.algo === (cfg.metodo === "segmentacion" ? "mejor" : cfg.metodo === "paginacion" ? "primero" : cfg.algo)));
+      a[i].disabled = cfg.metodo === "fija" || cfg.metodo === "segmentacion" || cfg.metodo === "paginacion";
     }
 
     $("#f-fijas").hidden = cfg.metodo !== "fija";
     $("#f-variables").hidden = cfg.metodo !== "variable";
     $("#f-dinamica").hidden = cfg.metodo !== "dinamica";
     $("#f-segmentacion").hidden = cfg.metodo !== "segmentacion";
-    $("#algo").setAttribute("aria-disabled", String(cfg.metodo === "fija" || cfg.metodo === "segmentacion"));
+    $("#f-paginacion").hidden = cfg.metodo !== "paginacion";
+    $("#algo").setAttribute("aria-disabled", String(cfg.metodo === "fija" || cfg.metodo === "segmentacion" || cfg.metodo === "paginacion"));
     $("#algo-hint").innerHTML = cfg.metodo === "fija"
       ? "No aplica: todas las particiones miden lo mismo, así que el gestor toma la primera libre."
       : cfg.metodo === "segmentacion" ? "Segmentación usa siempre mejor ajuste para cada uno de los seis segmentos."
+      : cfg.metodo === "paginacion" ? "Paginación usa siempre el primer marco libre para cada página."
       : (cfg.metodo === "variable"
         ? "Se elige entre las particiones libres que <em>quepan</em>: la primera, la más ajustada o la más grande."
         : "Se elige entre los huecos libres que quepan. Peor ajuste deja restos grandes; mejor ajuste, restos diminutos.");
@@ -538,18 +631,21 @@
     var sumaVar = cfg.variables.reduce(function(a,b){ return a + b; }, 0);
     $("#var-hint").innerHTML = "Suma: <b class=\"mono\">" + fmt(sumaVar * KiB) + "</b> de " + fmt(TOTAL - cfg.so) +
       " disponibles" + (sumaVar * KiB < TOTAL - cfg.so ? " · el resto queda sin particionar." : ".");
-    $("#cfg-note").textContent = cfg.metodo === "fija" ? "método 1" : cfg.metodo === "variable" ? "método 2" : cfg.metodo === "dinamica" ? "método 3" : "método 4";
+    $("#cfg-note").textContent = cfg.metodo === "fija" ? "método 1" : cfg.metodo === "variable" ? "método 2" : cfg.metodo === "dinamica" ? "método 3" : cfg.metodo === "segmentacion" ? "método 4" : "método 5";
     $("#btn-compactar").disabled = cfg.metodo !== "dinamica";
     $("#auto-compact").checked = cfg.autoCompact;
-    $("#np-contigua-fields").hidden = cfg.metodo === "segmentacion";
-    $("#np-segmentacion-fields").hidden = cfg.metodo !== "segmentacion";
-    $("#np-seg-note").hidden = cfg.metodo !== "segmentacion";
+    $("#np-contigua-fields").hidden = cfg.metodo === "segmentacion" || cfg.metodo === "paginacion";
+    $("#np-segmentacion-fields").hidden = cfg.metodo !== "segmentacion" && cfg.metodo !== "paginacion";
+    $("#np-seg-note").hidden = cfg.metodo !== "segmentacion" && cfg.metodo !== "paginacion";
     $("#btn-escenario-nc").hidden = cfg.metodo !== "segmentacion";
-    $("#legend-segmento").hidden = cfg.metodo !== "segmentacion";
-    $("#detalle-title").textContent = cfg.metodo === "segmentacion" ? "Programa y tabla de segmentación" : "Bloque seleccionado";
-    $("#detalle-note").textContent = cfg.metodo === "segmentacion" ? "segmento lógico → base física" : "distribución interna de segmentos";
-    $("#progs-base-heading").textContent = cfg.metodo === "segmentacion" ? "Bases" : "Base";
-    $("#prog-seglegend").innerHTML = cfg.metodo === "segmentacion"
+    $("#btn-escenario-pag").hidden = cfg.metodo !== "paginacion";
+    $("#btn-escenario").hidden = cfg.metodo === "paginacion";
+    $("#legend-segmento").hidden = cfg.metodo !== "segmentacion" && cfg.metodo !== "paginacion";
+    $("#legend-segmento").lastChild.textContent = cfg.metodo === "paginacion" ? "Marcos del programa seleccionado" : "Segmentos del programa seleccionado";
+    $("#detalle-title").textContent = cfg.metodo === "segmentacion" ? "Programa y tabla de segmentación" : cfg.metodo === "paginacion" ? "Programa y tabla de páginas" : "Bloque seleccionado";
+    $("#detalle-note").textContent = cfg.metodo === "segmentacion" ? "segmento lógico → base física" : cfg.metodo === "paginacion" ? "página lógica → marco físico" : "distribución interna de segmentos";
+    $("#progs-base-heading").textContent = cfg.metodo === "segmentacion" ? "Bases" : cfg.metodo === "paginacion" ? "Páginas" : "Base";
+    $("#prog-seglegend").innerHTML = (cfg.metodo === "segmentacion" || cfg.metodo === "paginacion")
       ? SEG6.map(function(s){ return '<span><i class="' + s.c + '"></i>' + s.n + '</span>'; }).join("")
       : '<span><i class="s-cod"></i>Código</span><span><i class="s-dat"></i>Datos</span><span><i class="s-pil"></i>Pila</span><span><i class="s-hea"></i>Montículo (heap)</span>';
 
@@ -557,12 +653,29 @@
       return '<span class="chip">' + miles(k) + ' KiB<button data-i="' + i + '" aria-label="Quitar partición de ' + k + ' KiB">&times;</button></span>';
     }).join("");
     $("#var-chips").innerHTML = chips || '<span class="hint">Sin particiones definidas.</span>';
+    $("#page-size").value = String(cfg.tamPagina / KiB);
+    if (cfg.metodo === "paginacion"){
+      var m = metricas();
+      $("#page-hint").textContent = m.totalMarcos + " marcos en total · " + m.soMarcos +
+        " reservados al S.O. · " + m.libresMarcos + " libres.";
+    }
+    $("#frame-card").hidden = cfg.metodo !== "paginacion";
   }
 
   function renderKPIs(){
     var m = metricas();
     var pct = Math.round(m.util * 100);
     var html = "";
+    if (cfg.metodo === "paginacion"){
+      html += kpi("Utilización", pct + "%", fmt(m.fisica) + " de " + fmt(m.usuario) + " de usuario", "", pct);
+      html += kpi("Marcos físicos", String(m.totalMarcos), m.soMarcos + " reservados al S.O.");
+      html += kpi("Marcos ocupados", String(m.ocupadosMarcos), fmt(m.fisica) + " asignados");
+      html += kpi("Marcos libres", String(m.libresMarcos), fmt(m.libreTotal) + " disponibles");
+      html += kpi("Frag. interna", fmt(m.fragInt), "relleno al final de cada región", "warn");
+      html += kpi("Memoria lógica", fmt(m.logica), m.cargados + " instancias cargadas");
+      $("#kpis").innerHTML = html;
+      return;
+    }
     html += kpi("Utilización", pct + "%", fmt(m.usado) + " de " + fmt(m.usuario), "", pct);
     html += kpi("Frag. interna", fmt(m.fragInt), (cfg.metodo === "dinamica" || cfg.metodo === "segmentacion") ? "nula: cada bloque se ajusta al tamaño" : "dentro de particiones asignadas", "warn");
     html += kpi(cfg.metodo === "segmentacion" ? "Libre dispersa" : "Frag. externa", fmt(m.fragExt), (cfg.metodo === "dinamica" || cfg.metodo === "segmentacion")
@@ -579,6 +692,23 @@
   }
 
   function renderMapa(){
+    if (cfg.metodo === "paginacion"){
+      var mapa = $("#mapa");
+      mapa.classList.add("paging-map");
+      mapa.innerHTML = mem.map(function(b){
+        var p = b.pid !== null ? prog(b.pid) : null;
+        var estado = b.estado === "so" ? "so" : p ? "ocupado" : "libre";
+        var nombre = p ? p.etq + " · pág. " + b.pagina : b.estado === "so" ? "S.O." : "Libre";
+        return '<button class="blk ' + estado + (p && selProg === p.pid ? ' related' : '') +
+          '" data-id="' + b.id + '" aria-pressed="' + (sel === b.id) + '" style="' +
+          (p ? '--pc:' + p.color : '') + '" title="Marco ' + b.numero + ' · ' + hex(b.base) +
+          ' · ' + esc(nombre) + '"><span class="in"><span class="l1">M' + b.numero +
+          ' · ' + hex(b.base) + '</span><span class="l2">' + esc(nombre) + '</span></span></button>';
+      }).join("");
+      $("#map-note").textContent = mem.length + " marcos · " + metricas().libresMarcos + " libres";
+      return;
+    }
+    $("#mapa").classList.remove("paging-map");
     var html = "", i;
     for (i=0;i<mem.length;i++){
       var b = mem[i];
@@ -617,6 +747,10 @@
   }
 
   function renderDetalle(){
+    if (cfg.metodo === "paginacion"){
+      renderDetallePaginacion();
+      return;
+    }
     if (cfg.metodo === "segmentacion"){
       renderDetalleSegmentacion();
       return;
@@ -697,10 +831,93 @@
     box.innerHTML = html;
   }
 
+  function renderDetallePaginacion(){
+    var box = $("#detalle");
+    var p = selProg !== null ? prog(selProg) : (selPlantilla !== null ? prog(selPlantilla) : null);
+    var b = mem.find(function(x){ return x.id === sel; });
+    var html = "";
+    if (b){
+      var dueño = b.pid !== null ? prog(b.pid) : null;
+      html += '<h3 class="segment-title">Marco seleccionado</h3><dl class="dl">' +
+        '<dt>Número</dt><dd>' + b.numero + '</dd><dt>Base física</dt><dd>' + hex(b.base) +
+        '</dd><dt>Tamaño</dt><dd>' + fmt(b.size) + ' (' + miles(b.size) + ' B)</dd>' +
+        '<dt>Estado</dt><dd>' + (b.estado === "so" ? "S.O." : b.estado === "libre" ? "Libre" : "Ocupado") +
+        '</dd><dt>Programa</dt><dd>' + (dueño ? dueño.etq + ' · ' + esc(dueño.nombre) : '—') +
+        '</dd><dt>Página lógica</dt><dd>' + (dueño ? b.pagina : '—') + '</dd></dl>';
+    }
+    if (!p){
+      box.innerHTML = html + '<p class="empty">Selecciona una instancia cargada para consultar su tabla de páginas y traducir direcciones.</p>';
+      return;
+    }
+    var plan = p.instancia ? p : calcularPaginas(p);
+    var tabla = p.instancia ? p.tabla : plan.tabla;
+    var espacio = p.instancia ? p.espacioLogico : plan.espacioLogico;
+    var fi = espacio - p.size;
+    html += '<p class="segment-intro"><strong>' + p.etq + ' · ' + esc(p.nombre) + '</strong> · ' +
+      '<span class="pill ' + (p.instancia ? 'cargado' : 'cola') + '">' + (p.instancia ? 'Instancia cargada' : 'En catálogo') + '</span></p>' +
+      '<dl class="dl"><dt>Páginas</dt><dd>' + tabla.length + '</dd><dt>Memoria lógica utilizada</dt><dd>' + fmt(p.size) +
+      '</dd><dt>Memoria física asignada</dt><dd>' + (p.instancia ? fmt(tabla.length * cfg.tamPagina) : '—') +
+      '</dd><dt>Fragmentación interna</dt><dd>' + fmt(fi) + '</dd>' +
+      '<dt>Espacio lógico paginado</dt><dd>0 – ' + hex(espacio - 1) + '</dd></dl>';
+    html += '<h3 class="segment-title">Tabla de páginas</h3><p class="hint">Cada región empieza en un límite de página. Los bytes de relleno no son direcciones válidas.</p>' +
+      '<div class="tblscroll page-scroll"><table class="tbl segment-table" id="tabla-paginas"><thead><tr>' +
+      '<th>Página lógica</th><th>Marco físico</th><th>Base física</th><th>Región</th><th>Bytes utilizados</th><th>Estado</th>' +
+      '</tr></thead><tbody>';
+    tabla.forEach(function(e){
+      var marco = e.numeroMarco === null ? null : mem[e.numeroMarco];
+      html += '<tr' + (marco && b && b.numero === marco.numero ? ' class="on"' : '') +
+        '><td class="mono">' + e.numeroPagina + '</td><td class="mono">' +
+        (marco ? marco.numero : '—') + '</td><td class="mono">' + (marco ? hex(marco.base) : '—') +
+        '</td><td>' + e.segmento + '</td><td class="mono">' + miles(e.bytesUtilizados) +
+        '</td><td>' + (e.presente ? 'Presente' : 'Sin asignar') + '</td></tr>';
+    });
+    html += '</tbody></table></div>';
+    if (p.instancia){
+      html += '<form id="traductor" class="translator"><label class="lbl" for="direccion-logica">Traducir dirección lógica</label>' +
+        '<p class="hint">Introduce bytes en decimal o hexadecimal (prefijo 0x). Se usa el espacio paginado alineado por región.</p>' +
+        '<div class="addrow"><input id="direccion-logica" type="text" inputmode="text" placeholder="Ej.: 0x010000 o 65536" required>' +
+        '<button class="btn sm primary" type="submit">Traducir</button></div><p id="traduccion" class="hint" role="status"></p></form>';
+    }
+    box.innerHTML = html;
+  }
+
+  function traducirDireccion(p, texto){
+    var valor = texto.trim();
+    if (!/^(?:0[xX][0-9a-fA-F]+|[0-9]+)$/.test(valor)) return { error:"Escribe una dirección entera no negativa en decimal o hexadecimal (0x)." };
+    var direccion = Number(valor);
+    if (!Number.isSafeInteger(direccion) || direccion >= p.espacioLogico)
+      return { error:"La dirección está fuera del espacio lógico paginado de esta instancia (0–" + hex(p.espacioLogico - 1) + ")." };
+    var pagina = Math.floor(direccion / cfg.tamPagina);
+    var desplazamiento = direccion % cfg.tamPagina;
+    var entrada = p.tabla[pagina];
+    if (!entrada || desplazamiento >= entrada.bytesUtilizados)
+      return { error:"La dirección cae en el relleno de la última página de " + (entrada ? entrada.segmento : "una región") + "; no pertenece a datos válidos." };
+    var marco = mem[entrada.numeroMarco];
+    if (!entrada.presente || !marco || marco.pid !== p.pid)
+      return { error:"La página no tiene un marco presente para esta instancia." };
+    return { pagina:pagina, desplazamiento:desplazamiento, marco:marco.numero,
+      base:marco.base, fisica:marco.base + desplazamiento, region:entrada.segmento };
+  }
+
+  function renderMarcos(){
+    if (cfg.metodo !== "paginacion") return;
+    var scroll = $(".frame-scroll"), posicion = scroll.scrollTop, m = metricas();
+    $("#frame-note").textContent = m.ocupadosMarcos + " ocupados · " + m.libresMarcos + " libres";
+    $("#tabla-marcos tbody").innerHTML = mem.map(function(b){
+      var p = b.pid !== null ? prog(b.pid) : null;
+      return '<tr' + (sel === b.id ? ' class="on"' : '') + '><td class="mono"><button class="program-select mono" data-frame="' + b.id + '" aria-label="Inspeccionar marco ' + b.numero + '">' + b.numero + '</button>' +
+        '</td><td class="mono">' + hex(b.base) + '</td><td>' +
+        (b.estado === "so" ? 'S.O.' : b.estado === "libre" ? 'Libre' : 'Ocupado') +
+        '</td><td>' + (p ? p.etq : '—') + '</td><td class="mono">' +
+        (p ? b.pagina : '—') + '</td></tr>';
+    }).join("");
+    scroll.scrollTop = posicion;
+  }
+
   function segbar(p, ancho){
     var total = p.size / KiB, out = '<span class="segbar" style="' + (ancho ? "min-width:100%" : "") + '" aria-hidden="true">';
-    var lista = cfg.metodo === "segmentacion" ? SEG6 : SEGS;
-    var valores = cfg.metodo === "segmentacion" ? p.seg6 : p.segs;
+    var lista = (cfg.metodo === "segmentacion" || cfg.metodo === "paginacion") ? SEG6 : SEGS;
+    var valores = (cfg.metodo === "segmentacion" || cfg.metodo === "paginacion") ? p.seg6 : p.segs;
     for (var i=0;i<lista.length;i++){
       out += '<i class="' + lista[i].c + '" style="flex:' + valores[lista[i].k] + '" title="' + lista[i].n + " " + miles(valores[lista[i].k]) + ' KiB"></i>';
     }
@@ -709,15 +926,15 @@
 
   function renderProgs(){
     var catalogo = plantillas(), activas = instancias(), html = "", i;
-    var lista = cfg.metodo === "segmentacion" ? SEG6 : SEGS;
+    var lista = (cfg.metodo === "segmentacion" || cfg.metodo === "paginacion") ? SEG6 : SEGS;
     for (i=0;i<catalogo.length;i++){
       var plantilla = catalogo[i];
-      var valores = cfg.metodo === "segmentacion" ? plantilla.seg6 : plantilla.segs;
+      var valores = (cfg.metodo === "segmentacion" || cfg.metodo === "paginacion") ? plantilla.seg6 : plantilla.segs;
       var segTxt = lista.map(function(s){ return s.n + " " + miles(valores[s.k]) + " KiB"; }).join(" · ");
       var copias = activas.filter(function(p){ return p.plantilla === plantilla.pid; }).length;
       html += '<tr class="' + (selPlantilla === plantilla.pid ? "on" : "") + '">' +
         '<td><span class="pname" style="--pc:' + plantilla.color + '"><span class="dot"></span><span class="txt">' +
-        (cfg.metodo === "segmentacion" ? '<button class="program-select" data-select-template="' + plantilla.pid + '">' + esc(plantilla.nombre) + '</button>' : '<b>' + esc(plantilla.nombre) + '</b>') +
+        ((cfg.metodo === "segmentacion" || cfg.metodo === "paginacion") ? '<button class="program-select" data-select-template="' + plantilla.pid + '">' + esc(plantilla.nombre) + '</button>' : '<b>' + esc(plantilla.nombre) + '</b>') +
         '<span class="tag">' + plantilla.etq + ' · catálogo</span></span></span></td>' +
         '<td title="' + segTxt + '" style="min-width:100px">' + segbar(plantilla) + '</td>' +
         '<td class="num">' + fmt(plantilla.size) + '</td><td class="num">—</td>' +
@@ -728,7 +945,7 @@
     if (!activas.length) html += '<tr><td colspan="6" class="empty">Aún no hay instancias en memoria.</td></tr>';
     for (i=0;i<activas.length;i++){
       var p = activas[i];
-      var segmentos = cfg.metodo === "segmentacion" ? p.seg6 : p.segs;
+      var segmentos = (cfg.metodo === "segmentacion" || cfg.metodo === "paginacion") ? p.seg6 : p.segs;
       var detalle = lista.map(function(s){ return s.n + " " + miles(segmentos[s.k]) + " KiB"; }).join(" · ");
       html += '<tr class="instance-row ' + (selProg === p.pid || (p.blk && p.blk === sel) ? "on" : "") + '">' +
         '<td><span class="pname" style="--pc:' + p.color + '"><span class="dot"></span><span class="txt">' +
@@ -736,7 +953,7 @@
         '<span class="tag">' + p.etq + ' · instancia</span></span></span></td>' +
         '<td title="' + detalle + '" style="min-width:100px">' + segbar(p) + '</td>' +
         '<td class="num">' + fmt(p.size) + '</td>' +
-        '<td class="num">' + (cfg.metodo === "segmentacion" ? "tabla" : hex(p.base)) + '</td>' +
+        '<td class="num">' + (cfg.metodo === "segmentacion" ? "tabla" : cfg.metodo === "paginacion" ? p.tabla.length : hex(p.base)) + '</td>' +
         '<td><span class="pill cargado">Cargada</span></td>' +
         '<td style="text-align:right"><button class="btn sm" data-liberar="' + p.pid + '">Eliminar</button></td></tr>';
     }
@@ -821,6 +1038,30 @@
     render();
   }
 
+  function escenarioPaginacion(){
+    if (cfg.metodo !== "paginacion") return;
+    construirMemoria(null);
+    bitacora = []; reloj = 0;
+    var catalogo = plantillas();
+    catalogo.forEach(function(p){ p.cargas = 0; });
+    var editor = catalogo.find(function(p){ return p.nombre === "Editor de texto"; });
+    var compilador = catalogo.find(function(p){ return p.nombre === "Compilador C"; });
+    var hoja = catalogo.find(function(p){ return p.nombre === "Hoja de cálculo"; });
+    var navegador = catalogo.find(function(p){ return p.nombre === "Navegador web"; });
+    addLog("nota", "Escenario de paginación: se cargan tres instancias, termina la intermedia y sus marcos se reutilizan.");
+    var a = cargar(editor.pid), intermedia = cargar(compilador.pid), c = cargar(hoja.pid);
+    if (!a || !intermedia || !c){ render(); return; }
+    liberar(intermedia.pid);
+    var nueva = cargar(navegador.pid);
+    if (nueva){
+      selProg = nueva.pid; selPlantilla = null; sel = null;
+      addLog("nota", nueva.etq + " reutiliza los marcos liberados por " + intermedia.etq +
+        " y continúa después de " + c.etq + ": sus páginas quedan físicamente separadas. " +
+        a.etq + " y " + c.etq + " siguen cargados; consulta el mapa y las tablas.");
+    }
+    render();
+  }
+
   function reiniciar(){
     sembrarProgramas();
     construirMemoria(null);
@@ -828,7 +1069,8 @@
     addLog("config", "Sistema iniciado · 16 MiB · S.O. " + fmt(cfg.so) + " · " +
       (cfg.metodo === "fija" ? Math.floor((TOTAL - cfg.so) / tamFija()) + " particiones de " + fmt(tamFija()) :
        cfg.metodo === "variable" ? cfg.variables.length + " particiones variables" :
-       cfg.metodo === "segmentacion" ? "segmentación con mejor ajuste" : "particiones dinámicas"));
+       cfg.metodo === "segmentacion" ? "segmentación con mejor ajuste" :
+       cfg.metodo === "paginacion" ? Math.floor(TOTAL / cfg.tamPagina) + " marcos de " + fmt(cfg.tamPagina) : "particiones dinámicas"));
     render();
   }
 
@@ -862,6 +1104,14 @@
   $("#so-size").addEventListener("change", function(){
     cfg.so = parseInt(this.value, 10) * MiB;
     construirMemoria("S.O. ocupa ahora " + fmt(cfg.so) + " (" + hex(0) + "–" + hex(cfg.so - 1) + ").");
+    render();
+  });
+  $("#page-size").addEventListener("change", function(){
+    var k = Number(this.value);
+    if (![32,64,128,256].includes(k)){ this.value = String(cfg.tamPagina / KiB); return; }
+    cfg.tamPagina = k * KiB;
+    construirMemoria("Tamaño de página → " + k + " KiB; se reconstruyen " +
+      Math.floor(TOTAL / cfg.tamPagina) + " marcos y las tablas de páginas.");
     render();
   });
   $("#fijas-size").addEventListener("change", function(){
@@ -909,6 +1159,7 @@
   $("#btn-liberar-todos").addEventListener("click", liberarTodos);
   $("#btn-escenario").addEventListener("click", escenarioFragmentacion);
   $("#btn-escenario-nc").addEventListener("click", escenarioNoContiguo);
+  $("#btn-escenario-pag").addEventListener("click", escenarioPaginacion);
   $("#btn-reset").addEventListener("click", reiniciar);
 
   $("#tabla-progs").addEventListener("click", function(e){
@@ -917,7 +1168,7 @@
     if (c){
       var instancia = cargar(parseInt(c.dataset.cargar, 10));
       if (instancia){
-        if (cfg.metodo === "segmentacion"){ selProg = instancia.pid; selPlantilla = null; sel = null; }
+        if (cfg.metodo === "segmentacion" || cfg.metodo === "paginacion"){ selProg = instancia.pid; selPlantilla = null; sel = null; }
         else sel = instancia.blk;
       }
       render();
@@ -926,15 +1177,25 @@
     else if (s){
       var p = prog(parseInt(s.dataset.selectProg, 10));
       if (!p) return;
-      selProg = p.pid; selPlantilla = null; sel = cfg.metodo === "segmentacion" ? null : p.blk;
-      renderMapa(); renderDetalle(); renderProgs();
+      selProg = p.pid; selPlantilla = null; sel = (cfg.metodo === "segmentacion" || cfg.metodo === "paginacion") ? null : p.blk;
+      renderMapa(); renderDetalle(); renderProgs(); renderMarcos();
     }
-    else if (t){ selPlantilla = parseInt(t.dataset.selectTemplate, 10); selProg = null; sel = null; renderMapa(); renderDetalle(); renderProgs(); }
+    else if (t){ selPlantilla = parseInt(t.dataset.selectTemplate, 10); selProg = null; sel = null; renderMapa(); renderDetalle(); renderProgs(); renderMarcos(); }
   });
   $("#mapa").addEventListener("click", function(e){
     var b = e.target.closest(".blk");
     if (!b) return;
     var id = parseInt(b.dataset.id, 10);
+    if (cfg.metodo === "paginacion"){
+      var marco = mem.find(function(x){ return x.id === id; });
+      if (!marco) return;
+      sel = id; selProg = marco.pid; selPlantilla = null;
+      addLog("consulta", "Marco " + marco.numero + " · base " + hex(marco.base) + " · " + fmt(marco.size) +
+        (marco.pid !== null ? " · " + prog(marco.pid).etq + " página " + marco.pagina :
+          marco.estado === "so" ? " · reservado al S.O." : " · libre"));
+      renderMapa(); renderDetalle(); renderProgs(); renderMarcos(); renderLog();
+      return;
+    }
     if (cfg.metodo === "segmentacion"){
       var segmento = mem.find(function(x){ return x.id === id; });
       selProg = segmento && segmento.pid !== null ? segmento.pid : null;
@@ -956,10 +1217,43 @@
     }
     renderMapa(); renderDetalle(); renderProgs(); renderLog();
   });
+  $("#tabla-marcos").addEventListener("click", function(e){
+    var boton = e.target.closest("button[data-frame]");
+    if (!boton) return;
+    var marco = mem.find(function(b){ return b.id === Number(boton.dataset.frame); });
+    if (!marco) return;
+    sel = marco.id; selProg = marco.pid; selPlantilla = null;
+    addLog("consulta", "Marco " + marco.numero + " · base " + hex(marco.base) + " · " + fmt(marco.size) +
+      (marco.pid !== null ? " · " + prog(marco.pid).etq + " página " + marco.pagina :
+        marco.estado === "so" ? " · reservado al S.O." : " · libre"));
+    renderMapa(); renderDetalle(); renderProgs(); renderMarcos(); renderLog();
+  });
+  $("#detalle").addEventListener("submit", function(e){
+    if (e.target.id !== "traductor") return;
+    e.preventDefault();
+    var p = prog(selProg);
+    if (!p || !p.instancia) return;
+    var entrada = $("#direccion-logica").value;
+    var res = traducirDireccion(p, entrada);
+    var salida = $("#traduccion");
+    if (res.error){
+      salida.textContent = res.error;
+      salida.className = "hint error";
+      addLog("rechazo", "Traducción " + esc(entrada) + " de " + p.etq + ": " + esc(res.error));
+    } else {
+      salida.textContent = "Página " + res.pagina + " (" + res.region + ") · desplazamiento " +
+        res.desplazamiento + " B · marco " + res.marco + " · base " + hex(res.base) +
+        " → dirección física " + hex(res.fisica) + " (" + res.fisica + ").";
+      salida.className = "hint success";
+      addLog("consulta", "Traducción de " + p.etq + ": " + esc(entrada) + " → pág. " +
+        res.pagina + ", desp. " + res.desplazamiento + ", marco " + res.marco + " → " + hex(res.fisica) + ".");
+    }
+    renderLog();
+  });
   $("#np-add").addEventListener("click", function(){
     var nombre = ($("#np-nombre").value || "").trim() || "Programa " + (plantillas().length + 1);
     var segs, exactos = null;
-    if (cfg.metodo === "segmentacion"){
+    if (cfg.metodo === "segmentacion" || cfg.metodo === "paginacion"){
       exactos = {};
       for (var i=0;i<SEG6.length;i++){
         var campo = $("#np-" + SEG6[i].k);
@@ -983,7 +1277,7 @@
       pid--; plantillaNumero--; return;
     }
     progs.push(p);
-    $("#np-hint").textContent = p.etq + " añadido: " + fmt(p.size) + " en " + (cfg.metodo === "segmentacion" ? 6 : 4) + " partes.";
+    $("#np-hint").textContent = p.etq + " añadido: " + fmt(p.size) + " en " + ((cfg.metodo === "segmentacion" || cfg.metodo === "paginacion") ? 6 : 4) + " partes.";
     $("#np-nombre").value = "";
     addLog("nota", p.etq + " · " + esc(nombre) + " se añade al catálogo con " + fmt(p.size) + ".");
     render();
